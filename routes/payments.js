@@ -16,3 +16,5 @@ router.put('/:id', validatePayment, updatePayment);
 router.delete('/:id', deletePayment);
 router.get('/reports', getFinancialReports);
 router.get('/:id/receipt', printPaymentReceipt);
+
+module.exports = router;

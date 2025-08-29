@@ -14,3 +14,5 @@ router.post('/', validateConsultation, createConsultation);
 router.put('/:id', validateConsultation, updateConsultation);
 router.delete('/:id', deleteConsultation);
 router.get('/:id/receipt', blockPaymentAccess, printReceipt);
+
+module.exports = router;

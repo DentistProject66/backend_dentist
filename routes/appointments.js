@@ -17,3 +17,5 @@ router.post('/cancel/:id', cancelAppointment);
 router.post('/complete/:id', completeAppointment);
 router.get('/slots/:date', getAvailableTimeSlots);
 router.get('/daily', getDailySchedule);
+
+module.exports = router;
