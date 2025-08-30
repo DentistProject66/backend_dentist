@@ -10,86 +10,69 @@ const generateReceiptNumber = (dentistId, type = 'CON') => {
 };
 
 // Get all consultations for a dentist
+// Get all consultations for a dentist
+// Get all consultations for a dentist
 const getConsultations = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, date_from, date_to, patient_id } = req.query;
     const dentistId = req.dentistId;
-    const offset = (page - 1) * limit;
+    const { page = 1, limit = 10 } = req.query;
 
-    let whereClause = 'WHERE c.dentist_id = ?';
-    let params = [dentistId];
+    // Ensure parameters are numbers and validate types
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
+    const offset = (pageNum - 1) * limitNum;
 
-    // Filter by patient
-    if (patient_id) {
-      whereClause += ' AND c.patient_id = ?';
-      params.push(patient_id);
+    // Debug parameters
+    console.log('getConsultations params:', { dentistId, pageNum, limitNum, offset });
+
+    // Validate dentistId
+    if (!dentistId || isNaN(dentistId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid Dentist ID is required'
+      });
     }
 
-    // Filter by date range
-    if (date_from) {
-      whereClause += ' AND c.date_of_consultation >= ?';
-      params.push(date_from);
-    }
-    if (date_to) {
-      whereClause += ' AND c.date_of_consultation <= ?';
-      params.push(date_to);
-    }
-
-    // Search functionality
-    if (search) {
-      whereClause += ' AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone LIKE ? OR c.type_of_prosthesis LIKE ?)';
-      const searchTerm = `%${search}%`;
-      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
-    }
-
-    // Get consultations with patient info
-    const consultations = await executeQuery(`
+    // Use simpler query without LIMIT/OFFSET first to test
+    const query = `
       SELECT 
         c.*,
         CONCAT(p.first_name, ' ', p.last_name) as patient_name,
         p.phone as patient_phone
       FROM consultations c
       JOIN patients p ON c.patient_id = p.id
-      ${whereClause}
+      WHERE c.dentist_id = ?
       ORDER BY c.date_of_consultation DESC, c.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, parseInt(limit), offset]);
+    `;
 
-    // Get total count
-    const totalCount = await executeQuery(`
-      SELECT COUNT(*) as count 
-      FROM consultations c
-      JOIN patients p ON c.patient_id = p.id
-      ${whereClause}
-    `, params);
+    // Start with just dentistId parameter, ensure it's an integer
+    const params = [parseInt(dentistId, 10)];
+    console.log('Executing query with params:', params);
 
-    // If user is assistant, remove payment information
-    if (req.user.role === 'assistant') {
-      consultations.forEach(consultation => {
-        delete consultation.total_price;
-        delete consultation.amount_paid;
-        delete consultation.remaining_balance;
-      });
-    }
+    const consultations = await executeQuery(query, params);
 
-    res.json({
+    // Apply pagination in JavaScript for now (temporary solution)
+    const startIndex = offset;
+    const endIndex = startIndex + limitNum;
+    const paginatedConsultations = consultations.slice(startIndex, endIndex);
+
+    res.status(200).json({
       success: true,
-      data: {
-        consultations,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: totalCount[0].count,
-          pages: Math.ceil(totalCount[0].count / limit)
-        }
+      message: 'Consultations retrieved successfully',
+      data: paginatedConsultations,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: consultations.length,
+        hasMore: endIndex < consultations.length
       }
     });
-
   } catch (error) {
     console.error('Get consultations error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get consultations'
+      message: 'Failed to retrieve consultations',
+      error: error.message
     });
   }
 };
@@ -97,99 +80,83 @@ const getConsultations = async (req, res) => {
 // Get consultation by ID
 const getConsultationById = async (req, res) => {
   try {
-    const { id } = req.params;
     const dentistId = req.dentistId;
+    const { id } = req.params;
 
-    // Get consultation with patient info
-    const consultation = await executeQuery(`
+    const query = `
       SELECT 
         c.*,
         CONCAT(p.first_name, ' ', p.last_name) as patient_name,
         p.phone as patient_phone,
-        p.first_name,
-        p.last_name
+        a.id as appointment_id,
+        a.appointment_date,
+        a.appointment_time,
+        a.treatment_type
       FROM consultations c
       JOIN patients p ON c.patient_id = p.id
+      LEFT JOIN appointments a ON c.id = a.consultation_id AND a.status != 'cancelled'
       WHERE c.id = ? AND c.dentist_id = ?
-    `, [id, dentistId]);
+    `;
 
-    if (consultation.length === 0) {
+    const [consultation] = await executeQuery(query, [id, dentistId]);
+
+    if (!consultation) {
       return res.status(404).json({
         success: false,
         message: 'Consultation not found'
       });
     }
 
-    let payments = [];
-    
-    // Get related payments only if user is not assistant
-    if (req.user.role !== 'assistant') {
-      payments = await executeQuery(`
-        SELECT * FROM payments 
-        WHERE consultation_id = ?
-        ORDER BY payment_date DESC
-      `, [id]);
-    }
+    const response = {
+      ...consultation,
+      follow_up_appointment: consultation.appointment_id ? {
+        id: consultation.appointment_id,
+        appointment_date: consultation.appointment_date,
+        appointment_time: consultation.appointment_time,
+        treatment_type: consultation.treatment_type
+      } : null
+    };
 
-    // Get related appointments
-    const appointments = await executeQuery(`
-      SELECT * FROM appointments 
-      WHERE consultation_id = ?
-      ORDER BY appointment_date DESC
-    `, [id]);
-
-    const consultationData = consultation[0];
-
-    // If user is assistant, remove payment information
-    if (req.user.role === 'assistant') {
-      delete consultationData.total_price;
-      delete consultationData.amount_paid;
-      delete consultationData.remaining_balance;
-    }
-
-    res.json({
+    res.status(200).json({
       success: true,
-      data: {
-        consultation: consultationData,
-        payments,
-        appointments
-      }
+      message: 'Consultation retrieved successfully',
+      data: response
     });
-
   } catch (error) {
-    console.error('Get consultation by ID error:', error);
+    console.error('Get consultation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get consultation details'
+      message: 'Failed to retrieve consultation',
+      error: error.message
     });
   }
 };
 
-
+// Create consultation
+// Create consultation - Updated version
 const createConsultation = async (req, res) => {
   try {
     const {
-      patient_id,
+      first_name,
+      last_name,
+      phone,
       date_of_consultation,
       type_of_prosthesis,
       total_price = 0,
       amount_paid = 0,
-      needs_followup = false
+      needs_followup = false,
+      follow_up_date,
+      follow_up_time = '09:00' // Default to 9:00 AM if not provided
     } = req.body;
 
     const dentistId = req.dentistId;
     const createdBy = req.user.id;
 
-    // Verify patient belongs to this dentist
-    const patient = await executeQuery(`
-      SELECT id, first_name, last_name, phone FROM patients 
-      WHERE id = ? AND dentist_id = ? AND is_archived = 0
-    `, [patient_id, dentistId]);
-
-    if (patient.length === 0) {
-      return res.status(404).json({
+    // Validate required patient fields
+    if (!first_name || !last_name) {
+      return res.status(400).json({
         success: false,
-        message: 'Patient not found or does not belong to your practice'
+        message: 'First name and last name are required'
       });
     }
 
@@ -202,67 +169,124 @@ const createConsultation = async (req, res) => {
       });
     }
 
-    // Generate receipt number
-    const receiptNumber = generateReceiptNumber(dentistId, 'CON');
-
-    // Create consultation
-    const result = await executeQuery(`
-      INSERT INTO consultations (
-        patient_id, dentist_id, date_of_consultation, type_of_prosthesis,
-        total_price, amount_paid, needs_followup, created_by, receipt_number
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      patient_id,
-      dentistId,
-      date_of_consultation,
-      type_of_prosthesis,
-      total_price,
-      amount_paid,
-      needs_followup,
-      createdBy,
-      receiptNumber
-    ]);
-
-    const consultationId = result.insertId;
-
-    // If there's an initial payment, record it
-    if (amount_paid > 0) {
-      const paymentReceiptNumber = generateReceiptNumber(dentistId, 'PAY');
+    // Validate follow_up_date and follow_up_time if needs_followup is true
+    let followUpDateStr = null;
+    let followUpTimeStr = '09:00';
+    
+    if (needs_followup) {
+      if (!follow_up_date) {
+        return res.status(400).json({
+          success: false,
+          message: 'follow_up_date is required when needs_followup is true'
+        });
+      }
       
-      await executeQuery(`
-        INSERT INTO payments (
-          consultation_id, patient_id, dentist_id, patient_name, payment_date,
-          amount_paid, payment_method, remaining_balance, receipt_number, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
-      `, [
-        consultationId,
-        patient_id,
-        dentistId,
-        `${patient[0].first_name} ${patient[0].last_name}`,
-        date_of_consultation,
-        amount_paid,
-        total_price - amount_paid,
-        paymentReceiptNumber,
-        createdBy
-      ]);
+      if (!follow_up_time) {
+        return res.status(400).json({
+          success: false,
+          message: 'follow_up_time is required when needs_followup is true'
+        });
+      }
+
+      const followUpDate = new Date(follow_up_date);
+      if (isNaN(followUpDate)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid follow_up_date format. Use YYYY-MM-DD'
+        });
+      }
+
+      // Validate time format
+      const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(follow_up_time)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid follow_up_time format. Use HH:MM (24-hour format)'
+        });
+      }
+
+      followUpDateStr = follow_up_date;
+      followUpTimeStr = follow_up_time;
     }
 
-    // If needs_followup is true, schedule a follow-up appointment
+    // Generate receipt numbers
+    const consultationReceiptNumber = generateReceiptNumber(dentistId, 'CON');
+    const paymentReceiptNumber = amount_paid > 0 ? generateReceiptNumber(dentistId, 'PAY') : null;
+
+    // Calculate remaining_balance for response and payments table
+    const remaining_balance = total_price - amount_paid;
+
+    // Insert patient first to get patient_id
+    const patientResult = await executeQuery(
+      `
+        INSERT INTO patients (
+          dentist_id, first_name, last_name, phone, created_by
+        ) VALUES (?, ?, ?, ?, ?)
+      `,
+      [dentistId, first_name, last_name, phone || null, createdBy]
+    );
+    const patientId = patientResult.insertId;
+
+    // Prepare transaction queries
+    const queries = [
+      // Create consultation
+      {
+        sql: `
+          INSERT INTO consultations (
+            patient_id, dentist_id, date_of_consultation, type_of_prosthesis,
+            total_price, amount_paid, needs_followup, created_by, receipt_number
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        params: [
+          patientId,
+          dentistId,
+          date_of_consultation,
+          type_of_prosthesis,
+          total_price,
+          amount_paid,
+          needs_followup,
+          createdBy,
+          consultationReceiptNumber
+        ]
+      }
+    ];
+
+    // Add payment if amount_paid > 0
+    if (amount_paid > 0) {
+      queries.push({
+        sql: `
+          INSERT INTO payments (
+            consultation_id, patient_id, dentist_id, patient_name, payment_date,
+            amount_paid, payment_method, remaining_balance, receipt_number, created_by
+          ) VALUES (LAST_INSERT_ID(), ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
+        `,
+        params: [
+          patientId,
+          dentistId,
+          `${first_name} ${last_name}`,
+          date_of_consultation,
+          amount_paid,
+          total_price - amount_paid,
+          paymentReceiptNumber,
+          createdBy
+        ]
+      });
+    }
+
+    // Add follow-up appointment if needs_followup is true
     let followUpAppointment = null;
     if (needs_followup) {
-      // Calculate follow-up date (7 days later)
-      const followUpDate = new Date(consultationDate);
-      followUpDate.setDate(consultationDate.getDate() + 7);
-      const followUpDateStr = followUpDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
-      // Default appointment time
-      const appointmentTime = '09:00';
+      // Use the provided follow_up_time instead of hardcoded '09:00'
+      const appointmentTime = followUpTimeStr;
 
       // Check for time slot availability
-      const existingAppointments = await executeQuery(`
-        SELECT id FROM appointments 
-        WHERE dentist_id = ? AND appointment_date = ? AND appointment_time = ? AND status != 'cancelled'
-      `, [dentistId, followUpDateStr, appointmentTime]);
+      const existingAppointments = await executeQuery(
+        `
+          SELECT id FROM appointments 
+          WHERE dentist_id = ? AND appointment_date = ? AND appointment_time = ? AND status != 'cancelled'
+        `,
+        [dentistId, followUpDateStr, appointmentTime]
+      );
 
       if (existingAppointments.length > 0) {
         return res.status(400).json({
@@ -271,28 +295,36 @@ const createConsultation = async (req, res) => {
         });
       }
 
-      // Create follow-up appointment
-      const appointmentResult = await executeQuery(`
-        INSERT INTO appointments (
-          patient_id, dentist_id, appointment_date, appointment_time,
-          patient_name, patient_phone, treatment_type, status, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        patient_id,
-        dentistId,
-        followUpDateStr,
-        appointmentTime,
-        `${patient[0].first_name} ${patient[0].last_name}`,
-        patient[0].phone,
-        'Follow-up',
-        'scheduled',
-        createdBy
-      ]);
+      queries.push({
+        sql: `
+          INSERT INTO appointments (
+            patient_id, dentist_id, appointment_date, appointment_time,
+            patient_name, patient_phone, treatment_type, status, created_by, consultation_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, LAST_INSERT_ID())
+        `,
+        params: [
+          patientId,
+          dentistId,
+          followUpDateStr,
+          appointmentTime, // Now uses the provided time
+          `${first_name} ${last_name}`,
+          phone || null,
+          'Follow-up',
+          'confirmed',
+          createdBy
+        ]
+      });
+    }
 
+    // Execute transaction for consultation, payment, and appointment
+    const results = await executeTransaction(queries);
+
+    const consultationId = results[0].insertId;
+    if (needs_followup) {
       followUpAppointment = {
-        id: appointmentResult.insertId,
+        id: results[queries.length - 1].insertId,
         appointment_date: followUpDateStr,
-        appointment_time: appointmentTime,
+        appointment_time: followUpTimeStr, // Return the actual time used
         treatment_type: 'Follow-up'
       };
     }
@@ -302,13 +334,14 @@ const createConsultation = async (req, res) => {
       message: 'Consultation created successfully',
       data: {
         id: consultationId,
-        receipt_number: receiptNumber,
-        patient_name: `${patient[0].first_name} ${patient[0].last_name}`,
+        receipt_number: consultationReceiptNumber,
+        patient_id: patientId,
+        patient_name: `${first_name} ${last_name}`,
         date_of_consultation,
         type_of_prosthesis,
         total_price,
         amount_paid,
-        remaining_balance: total_price - amount_paid,
+        remaining_balance,
         needs_followup,
         follow_up_appointment: followUpAppointment
       }
@@ -318,125 +351,298 @@ const createConsultation = async (req, res) => {
     console.error('Create consultation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create consultation'
+      message: 'Failed to create consultation',
+      error: error.message
     });
   }
 };
 
-module.exports = { createConsultation };
+
 // Update consultation
+// Updated updateConsultation function
+// Updated updateConsultation function
 const updateConsultation = async (req, res) => {
   try {
-    const { id } = req.params;
-    const {
-      date_of_consultation,
-      type_of_prosthesis,
-      total_price,
-      needs_followup
-    } = req.body;
-    
     const dentistId = req.dentistId;
+    const { id } = req.params;
+    const { 
+      date_of_consultation, 
+      type_of_prosthesis, 
+      total_price, 
+      amount_paid, 
+      needs_followup, 
+      follow_up_date,
+      follow_up_time = '09:00' // Default time if not provided
+    } = req.body;
 
-    // Check if consultation exists and belongs to this dentist
-    const consultation = await executeQuery(`
-      SELECT id, amount_paid FROM consultations 
-      WHERE id = ? AND dentist_id = ?
-    `, [id, dentistId]);
+    // Validate inputs
+    if (date_of_consultation && isNaN(new Date(date_of_consultation))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date_of_consultation format. Use YYYY-MM-DD'
+      });
+    }
 
-    if (consultation.length === 0) {
+    if (needs_followup && !follow_up_date) {
+      return res.status(400).json({
+        success: false,
+        message: 'follow_up_date is required when needs_followup is true'
+      });
+    }
+
+    if (needs_followup && !follow_up_time) {
+      return res.status(400).json({
+        success: false,
+        message: 'follow_up_time is required when needs_followup is true'
+      });
+    }
+
+    if (follow_up_date && isNaN(new Date(follow_up_date))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid follow_up_date format. Use YYYY-MM-DD'
+      });
+    }
+
+    // Validate time format if provided
+    if (follow_up_time) {
+      const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(follow_up_time)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid follow_up_time format. Use HH:MM (24-hour format)'
+        });
+      }
+    }
+
+    // Check if consultation exists
+    const [consultation] = await executeQuery(
+      `SELECT c.*, CONCAT(p.first_name, ' ', p.last_name) as patient_name, p.phone as patient_phone 
+       FROM consultations c 
+       JOIN patients p ON c.patient_id = p.id 
+       WHERE c.id = ? AND c.dentist_id = ?`,
+      [id, dentistId]
+    );
+
+    if (!consultation) {
       return res.status(404).json({
         success: false,
         message: 'Consultation not found'
       });
     }
 
-    // Update consultation
-    await executeQuery(`
-      UPDATE consultations 
-      SET date_of_consultation = ?, type_of_prosthesis = ?, total_price = ?, needs_followup = ?
-      WHERE id = ? AND dentist_id = ?
-    `, [date_of_consultation, type_of_prosthesis, total_price, needs_followup, id, dentistId]);
+    // Prepare update fields
+    const updates = {};
+    if (date_of_consultation) updates.date_of_consultation = date_of_consultation;
+    if (type_of_prosthesis) updates.type_of_prosthesis = type_of_prosthesis;
+    if (total_price !== undefined) updates.total_price = total_price;
+    if (amount_paid !== undefined) updates.amount_paid = amount_paid;
+    if (needs_followup !== undefined) updates.needs_followup = needs_followup;
 
-    res.json({
+    if (Object.keys(updates).length === 0 && !needs_followup) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields provided for update'
+      });
+    }
+
+    // Check if payment amount changed
+    const paymentChanged = amount_paid !== undefined && amount_paid !== consultation.amount_paid;
+    const newTotalPrice = total_price !== undefined ? total_price : consultation.total_price;
+    const newAmountPaid = amount_paid !== undefined ? amount_paid : consultation.amount_paid;
+    const newRemainingBalance = newTotalPrice - newAmountPaid;
+
+    // Update consultation if there are fields to update
+    if (Object.keys(updates).length > 0) {
+      const updateQuery = `
+        UPDATE consultations 
+        SET ${Object.keys(updates).map(key => `${key} = ?`).join(', ')}
+        WHERE id = ? AND dentist_id = ?
+      `;
+      const updateParams = [...Object.values(updates), id, dentistId];
+      await executeQuery(updateQuery, updateParams);
+    }
+
+    // Handle payment table updates when amount_paid changes
+    if (paymentChanged) {
+      // Check if payment record exists for this consultation
+      const [existingPayment] = await executeQuery(
+        `SELECT id FROM payments WHERE consultation_id = ?`,
+        [id]
+      );
+
+      if (newAmountPaid > 0) {
+        if (existingPayment) {
+          // Update existing payment record
+          await executeQuery(
+            `
+              UPDATE payments 
+              SET amount_paid = ?, remaining_balance = ?, payment_date = ?
+              WHERE consultation_id = ?
+            `,
+            [newAmountPaid, newRemainingBalance, new Date().toISOString().split('T')[0], id]
+          );
+        } else {
+          // Create new payment record
+          const paymentReceiptNumber = generateReceiptNumber(dentistId, 'PAY');
+          await executeQuery(
+            `
+              INSERT INTO payments (
+                consultation_id, patient_id, dentist_id, patient_name, payment_date,
+                amount_paid, payment_method, remaining_balance, receipt_number, created_by
+              ) VALUES (?, ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
+            `,
+            [
+              id,
+              consultation.patient_id,
+              dentistId,
+              consultation.patient_name,
+              new Date().toISOString().split('T')[0],
+              newAmountPaid,
+              newRemainingBalance,
+              paymentReceiptNumber,
+              consultation.created_by
+            ]
+          );
+        }
+      } else if (newAmountPaid === 0 && existingPayment) {
+        // Delete payment record if amount is set to 0
+        await executeQuery(
+          `DELETE FROM payments WHERE consultation_id = ?`,
+          [id]
+        );
+      }
+    }
+
+    // Handle follow-up appointment
+    if (needs_followup && follow_up_date && follow_up_time) {
+      const appointmentTime = follow_up_time; // Use the provided time
+      
+      // Check for time slot availability (exclude current consultation's appointment)
+      const existingAppointments = await executeQuery(
+        `
+          SELECT id FROM appointments 
+          WHERE dentist_id = ? AND appointment_date = ? AND appointment_time = ? 
+          AND status != 'cancelled' AND consultation_id != ?
+        `,
+        [dentistId, follow_up_date, appointmentTime, id]
+      );
+
+      if (existingAppointments.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Time slot ${appointmentTime} on ${follow_up_date} is already taken`
+        });
+      }
+
+      // Update or create appointment
+      const [existingAppointment] = await executeQuery(
+        `SELECT id FROM appointments WHERE consultation_id = ? AND status != 'cancelled'`,
+        [id]
+      );
+
+      if (existingAppointment) {
+        await executeQuery(
+          `
+            UPDATE appointments 
+            SET appointment_date = ?, appointment_time = ?, treatment_type = ?, status = ?
+            WHERE id = ?
+          `,
+          [follow_up_date, appointmentTime, 'Follow-up', 'confirmed', existingAppointment.id]
+        );
+      } else {
+        await executeQuery(
+          `
+            INSERT INTO appointments (
+              patient_id, dentist_id, appointment_date, appointment_time,
+              patient_name, patient_phone, treatment_type, status, created_by, consultation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            consultation.patient_id,
+            dentistId,
+            follow_up_date,
+            appointmentTime, // Use the provided time
+            consultation.patient_name,
+            consultation.patient_phone,
+            'Follow-up',
+            'confirmed',
+            consultation.created_by,
+            id
+          ]
+        );
+      }
+    } else if (needs_followup === false) {
+      // Cancel existing appointment when followup is explicitly set to false
+      await executeQuery(
+        `UPDATE appointments SET status = 'cancelled' WHERE consultation_id = ? AND status != 'cancelled'`,
+        [id]
+      );
+    }
+
+    // Fetch updated consultation
+    const [updatedConsultation] = await executeQuery(
+      `
+        SELECT 
+          c.*,
+          CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+          p.phone as patient_phone
+        FROM consultations c
+        JOIN patients p ON c.patient_id = p.id
+        WHERE c.id = ? AND c.dentist_id = ?
+      `,
+      [id, dentistId]
+    );
+
+    res.status(200).json({
       success: true,
-      message: 'Consultation updated successfully'
+      message: 'Consultation updated successfully',
+      data: updatedConsultation
     });
-
   } catch (error) {
     console.error('Update consultation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to update consultation'
+      message: 'Failed to update consultation',
+      error: error.message
     });
   }
 };
-
 // Delete consultation
 const deleteConsultation = async (req, res) => {
   try {
-    const { id } = req.params;
     const dentistId = req.dentistId;
-    const archivedBy = req.user.id;
+    const { id } = req.params;
 
-    // Check if consultation exists and belongs to this dentist
-    const consultation = await executeQuery(`
-      SELECT c.*, CONCAT(p.first_name, ' ', p.last_name) as patient_name
-      FROM consultations c
-      JOIN patients p ON c.patient_id = p.id
-      WHERE c.id = ? AND c.dentist_id = ?
-    `, [id, dentistId]);
+    // Check if consultation exists
+    const [consultation] = await executeQuery(
+      `SELECT * FROM consultations WHERE id = ? AND dentist_id = ?`,
+      [id, dentistId]
+    );
 
-    if (consultation.length === 0) {
+    if (!consultation) {
       return res.status(404).json({
         success: false,
         message: 'Consultation not found'
       });
     }
 
-    // Get related data for archiving
-    const payments = await executeQuery('SELECT * FROM payments WHERE consultation_id = ?', [id]);
-    const appointments = await executeQuery('SELECT * FROM appointments WHERE consultation_id = ?', [id]);
+    // Soft delete or hard delete (depending on schema)
+    await executeQuery(
+      `DELETE FROM consultations WHERE id = ? AND dentist_id = ?`,
+      [id, dentistId]
+    );
 
-    // Archive and delete in transaction
-    const queries = [
-      // Archive consultation data
-      {
-        sql: 'INSERT INTO archives (dentist_id, original_table, original_id, data_json, archive_type, archived_by) VALUES (?, ?, ?, ?, ?, ?)',
-        params: [dentistId, 'consultations', id, JSON.stringify({
-          consultation: consultation[0],
-          payments,
-          appointments
-        }), 'deleted', archivedBy]
-      },
-      // Delete related appointments
-      {
-        sql: 'DELETE FROM appointments WHERE consultation_id = ?',
-        params: [id]
-      },
-      // Delete related payments
-      {
-        sql: 'DELETE FROM payments WHERE consultation_id = ?',
-        params: [id]
-      },
-      // Delete consultation
-      {
-        sql: 'DELETE FROM consultations WHERE id = ?',
-        params: [id]
-      }
-    ];
-
-    await executeTransaction(queries);
-
-    res.json({
+    res.status(200).json({
       success: true,
       message: 'Consultation deleted successfully'
     });
-
   } catch (error) {
     console.error('Delete consultation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to delete consultation'
+      message: 'Failed to delete consultation',
+      error: error.message
     });
   }
 };
@@ -444,67 +650,53 @@ const deleteConsultation = async (req, res) => {
 // Print consultation receipt
 const printReceipt = async (req, res) => {
   try {
-    const { id } = req.params;
     const dentistId = req.dentistId;
+    const { id } = req.params;
 
-    // Get consultation with patient and dentist info
-    const consultation = await executeQuery(`
-      SELECT 
-        c.*,
-        CONCAT(p.first_name, ' ', p.last_name) as patient_name,
-        p.phone as patient_phone,
-        CONCAT(u.first_name, ' ', u.last_name) as dentist_name,
-        u.practice_name
-      FROM consultations c
-      JOIN patients p ON c.patient_id = p.id
-      JOIN users u ON c.dentist_id = u.id
-      WHERE c.id = ? AND c.dentist_id = ?
-    `, [id, dentistId]);
+    const [consultation] = await executeQuery(
+      `
+        SELECT 
+          c.*,
+          CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+          p.phone as patient_phone
+        FROM consultations c
+        JOIN patients p ON c.patient_id = p.id
+        WHERE c.id = ? AND c.dentist_id = ?
+      `,
+      [id, dentistId]
+    );
 
-    if (consultation.length === 0) {
+    if (!consultation) {
       return res.status(404).json({
         success: false,
         message: 'Consultation not found'
       });
     }
 
-    // If user is assistant, block access to financial information
-    if (req.user.role === 'assistant') {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Assistants cannot access financial information.'
-      });
-    }
-
-    const consultationData = consultation[0];
-
-    // Create receipt data
-    const receiptData = {
-      receipt_number: consultationData.receipt_number,
-      date: moment(consultationData.date_of_consultation).format('DD/MM/YYYY'),
-      practice_name: consultationData.practice_name,
-      dentist_name: consultationData.dentist_name,
-      patient_name: consultationData.patient_name,
-      patient_phone: consultationData.patient_phone,
-      treatment: consultationData.type_of_prosthesis,
-      total_price: consultationData.total_price,
-      amount_paid: consultationData.amount_paid,
-      remaining_balance: consultationData.remaining_balance
-    };
-
-    res.json({
+    res.status(200).json({
       success: true,
-      data: receiptData
+      message: 'Receipt generated successfully',
+      data: {
+        consultation_id: consultation.id,
+        receipt_number: consultation.receipt_number,
+        patient_name: consultation.patient_name,
+        date_of_consultation: consultation.date_of_consultation,
+        type_of_prosthesis: consultation.type_of_prosthesis,
+        total_price: consultation.total_price,
+        amount_paid: consultation.amount_paid,
+        remaining_balance: consultation.remaining_balance
+      }
     });
-
   } catch (error) {
     console.error('Print receipt error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to generate receipt'
+      message: 'Failed to generate receipt',
+      error: error.message
     });
   }
 };
+
 
 module.exports = {
   getConsultations,
