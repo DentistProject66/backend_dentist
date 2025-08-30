@@ -3,59 +3,68 @@ const { executeQuery, executeTransaction } = require('../config/db');
 // Get all patients for a dentist
 const getPatients = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, archived } = req.query;
-    const dentistId = req.dentistId;
-    const offset = (page - 1) * limit;
+  const { page = 1, limit = 10, search, archived } = req.query;
+const dentistId = req.dentistId;
 
-    let whereClause = 'WHERE dentist_id = ?';
-    let params = [dentistId];
+const limitNum = parseInt(limit, 10) || 10;
+const offsetNum = (parseInt(page, 10) - 1) * limitNum;
 
-    // Filter by archived status
-    if (archived !== undefined) {
-      whereClause += ' AND is_archived = ?';
-      params.push(archived === 'true' ? 1 : 0);
-    }
+let whereClause = "WHERE p.dentist_id = ?";
+let params = [dentistId];
 
-    // Search functionality
-    if (search) {
-      whereClause += ' AND (first_name LIKE ? OR last_name LIKE ? OR phone LIKE ?)';
-      const searchTerm = `%${search}%`;
-      params.push(searchTerm, searchTerm, searchTerm);
-    }
+if (archived !== undefined) {
+  whereClause += ' AND p.is_archived = ?';
+  params.push(archived === 'true' ? 1 : 0);
+}
 
-    // Get patients with latest consultation info
-    const patients = await executeQuery(`
-      SELECT 
-        p.id, p.first_name, p.last_name, p.phone, p.created_at, p.is_archived,
-        c.id as latest_consultation_id,
-        c.date_of_consultation as last_consultation_date,
-        c.type_of_prosthesis as latest_treatment,
-        c.total_price,
-        c.amount_paid,
-        c.remaining_balance,
-        CASE 
-          WHEN c.remaining_balance = 0 THEN 'Paid'
-          WHEN c.amount_paid = 0 THEN 'Pending'
-          ELSE 'Partial'
-        END as payment_status,
-        a.appointment_date as next_appointment_date,
-        a.appointment_time as next_appointment_time
-      FROM patients p
-      LEFT JOIN consultations c ON p.id = c.patient_id 
-        AND c.id = (SELECT MAX(id) FROM consultations WHERE patient_id = p.id)
-      LEFT JOIN appointments a ON p.id = a.patient_id 
-        AND a.appointment_date >= CURDATE() 
-        AND a.status IN ('scheduled', 'confirmed', 'pending')
-        AND a.id = (SELECT MIN(id) FROM appointments WHERE patient_id = p.id AND appointment_date >= CURDATE() AND status IN ('scheduled', 'confirmed', 'pending'))
-      ${whereClause}
-      ORDER BY p.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, parseInt(limit), offset]);
+if (search) {
+  whereClause += ' AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone LIKE ?)';
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm, searchTerm);
+}
+const patients = await executeQuery(`
+  SELECT 
+    p.id, p.first_name, p.last_name, p.phone, p.created_at, p.is_archived,
+    c.id as latest_consultation_id,
+    c.date_of_consultation as last_consultation_date,
+    c.type_of_prosthesis as latest_treatment,
+    c.total_price,
+    c.amount_paid,
+    c.remaining_balance,
+    CASE 
+      WHEN c.remaining_balance = 0 THEN 'Paid'
+      WHEN c.amount_paid = 0 THEN 'Pending'
+      ELSE 'Partial'
+    END as payment_status,
+    a.appointment_date as next_appointment_date,
+    a.appointment_time as next_appointment_time
+  FROM patients p
+  LEFT JOIN consultations c 
+    ON p.id = c.patient_id 
+    AND c.id = (SELECT MAX(id) FROM consultations WHERE patient_id = p.id)
+  LEFT JOIN appointments a 
+    ON p.id = a.patient_id 
+    AND a.appointment_date >= CURDATE() 
+    AND a.status IN ('scheduled', 'confirmed', 'pending')
+    AND a.id = (
+      SELECT MIN(id) 
+      FROM appointments 
+      WHERE patient_id = p.id 
+      AND appointment_date >= CURDATE() 
+      AND status IN ('scheduled', 'confirmed', 'pending')
+    )
+  ${whereClause}
+  ORDER BY p.created_at DESC
+  LIMIT ${limitNum} OFFSET ${offsetNum}   -- 👈 inline instead of ?
+`, params);
 
-    // Get total count
-    const totalCount = await executeQuery(`
-      SELECT COUNT(*) as count FROM patients ${whereClause}
-    `, params);
+
+const totalCount = await executeQuery(`
+  SELECT COUNT(*) as count 
+  FROM patients p 
+  ${whereClause}
+`, params);
+
 
     // If user is assistant, remove payment information
     if (req.user.role === 'assistant') {
