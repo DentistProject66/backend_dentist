@@ -1,3 +1,4 @@
+
 const { body, validationResult } = require('express-validator');
 
 // Handle validation errors
@@ -72,13 +73,29 @@ const validatePatient = [
 
 // Consultation validation
 const validateConsultation = [
-  body('patient_id')
-    .isInt({ min: 1 })
-    .withMessage('Valid patient ID is required'),
+  body('first_name')
+    .notEmpty()
+    .withMessage('First name is required')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('First name must be between 1 and 100 characters'),
+  body('last_name')
+    .notEmpty()
+    .withMessage('Last name is required')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Last name must be between 1 and 100 characters'),
+  body('phone')
+    .optional()
+    .trim()
+    .isLength({ max: 20 })
+    .withMessage('Phone number must not exceed 20 characters'),
   body('date_of_consultation')
+    .notEmpty()
+    .withMessage('Date of consultation is required')
     .isISO8601()
     .toDate()
-    .withMessage('Please provide a valid consultation date'),
+    .withMessage('Please provide a valid consultation date (YYYY-MM-DD)'),
   body('type_of_prosthesis')
     .optional()
     .trim()
@@ -96,14 +113,30 @@ const validateConsultation = [
     .optional()
     .isBoolean()
     .withMessage('Needs followup must be true or false'),
+  body('follow_up_date')
+    .if(body('needs_followup').equals(true))
+    .notEmpty()
+    .withMessage('Follow-up date is required when needs_followup is true')
+    .isISO8601()
+    .toDate()
+    .withMessage('Please provide a valid follow-up date (YYYY-MM-DD)'),
+  body('follow_up_time')
+    .if(body('needs_followup').equals(true))
+    .notEmpty()
+    .withMessage('Follow-up time is required when needs_followup is true')
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Please provide a valid time in HH:MM format'),
   handleValidationErrors
 ];
-
 // Appointment validation
 const validateAppointment = [
   body('patient_id')
     .isInt({ min: 1 })
     .withMessage('Valid patient ID is required'),
+  body('consultation_id')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Consultation ID must be a positive integer'),
   body('appointment_date')
     .isISO8601()
     .toDate()
@@ -135,6 +168,44 @@ const validateAppointment = [
   handleValidationErrors
 ];
 
+const validateConsultationUpdate = [
+  body('date_of_consultation')
+    .optional()
+    .isISO8601()
+    .toDate()
+    .withMessage('Please provide a valid consultation date (YYYY-MM-DD)'),
+  body('type_of_prosthesis')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('Type of prosthesis must be between 2 and 255 characters'),
+  body('total_price')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Total price must be a positive number'),
+  body('amount_paid')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Amount paid must be a positive number'),
+  body('needs_followup')
+    .optional()
+    .isBoolean()
+    .withMessage('Needs followup must be true or false'),
+  body('follow_up_date')
+    .if(body('needs_followup').equals(true))
+    .notEmpty()
+    .withMessage('Follow-up date is required when needs_followup is true')
+    .isISO8601()
+    .toDate()
+    .withMessage('Please provide a valid follow-up date (YYYY-MM-DD)'),
+  body('follow_up_time')
+    .if(body('needs_followup').equals(true))
+    .notEmpty()
+    .withMessage('Follow-up time is required when needs_followup is true')
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Please provide a valid time in HH:MM format'),
+  handleValidationErrors
+];
 // Payment validation
 const validatePayment = [
   body('consultation_id')
@@ -180,5 +251,6 @@ module.exports = {
   validateAppointment,
   validatePayment,
   validateId,
-  handleValidationErrors
+  handleValidationErrors,
+  validateConsultationUpdate
 };

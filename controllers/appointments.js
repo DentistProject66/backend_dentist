@@ -155,8 +155,21 @@ const createAppointment = async (req, res) => {
       notes
     } = req.body;
     
-    const dentistId = req.dentistId;
-    const createdBy = req.user.id;
+    const dentistId = parseInt(req.dentistId, 10);
+    const createdBy = parseInt(req.user.id, 10);
+
+    // Validate required fields
+    if (!patient_id || !appointment_date || !appointment_time || !patient_name || !patient_phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: patient_id, appointment_date, appointment_time, patient_name, or patient_phone'
+      });
+    }
+
+    // Ensure optional fields are null if undefined
+    const safeConsultationId = consultation_id !== undefined ? consultation_id : null;
+    const safeTreatmentType = treatment_type !== undefined ? treatment_type : null;
+    const safeNotes = notes !== undefined ? notes : null;
 
     // Verify patient belongs to this dentist
     const patient = await executeQuery(`
@@ -190,7 +203,7 @@ const createAppointment = async (req, res) => {
         patient_id, dentist_id, consultation_id, appointment_date, appointment_time,
         patient_name, patient_phone, treatment_type, notes, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [patient_id, dentistId, consultation_id, appointment_date, appointment_time, patient_name, patient_phone, treatment_type, notes, createdBy]);
+    `, [patient_id, dentistId, safeConsultationId, appointment_date, appointment_time, patient_name, patient_phone, safeTreatmentType, safeNotes, createdBy]);
 
     res.status(201).json({
       success: true,
@@ -200,7 +213,7 @@ const createAppointment = async (req, res) => {
         appointment_date,
         appointment_time,
         patient_name,
-        treatment_type,
+        treatment_type: safeTreatmentType,
         status: 'pending'
       }
     });
@@ -209,7 +222,8 @@ const createAppointment = async (req, res) => {
     console.error('Create appointment error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create appointment'
+      message: 'Failed to create appointment',
+      error: error.message
     });
   }
 };
@@ -228,7 +242,12 @@ const updateAppointment = async (req, res) => {
       notes
     } = req.body;
     
-    const dentistId = req.dentistId;
+    const dentistId = parseInt(req.dentistId, 10);
+
+    // Ensure optional fields are null if undefined
+    const safeTreatmentType = treatment_type !== undefined ? treatment_type : null;
+    const safeStatus = status !== undefined ? status : null;
+    const safeNotes = notes !== undefined ? notes : null;
 
     // Check if appointment exists and belongs to this dentist
     const appointment = await executeQuery(`
@@ -246,14 +265,14 @@ const updateAppointment = async (req, res) => {
     const currentAppointment = appointment[0];
 
     // If date or time is being changed, check availability
-    if ((appointment_date !== currentAppointment.appointment_date) || 
-        (appointment_time !== currentAppointment.appointment_time)) {
+    if ((appointment_date && appointment_date !== currentAppointment.appointment_date) || 
+        (appointment_time && appointment_time !== currentAppointment.appointment_time)) {
       
       const existingAppointment = await executeQuery(`
         SELECT id FROM appointments 
         WHERE dentist_id = ? AND appointment_date = ? AND appointment_time = ? 
         AND status IN ('pending', 'confirmed') AND id != ?
-      `, [dentistId, appointment_date, appointment_time, id]);
+      `, [dentistId, appointment_date || currentAppointment.appointment_date, appointment_time || currentAppointment.appointment_time, id]);
 
       if (existingAppointment.length > 0) {
         return res.status(400).json({
@@ -266,10 +285,15 @@ const updateAppointment = async (req, res) => {
     // Update appointment
     await executeQuery(`
       UPDATE appointments 
-      SET appointment_date = ?, appointment_time = ?, patient_name = ?, 
-          patient_phone = ?, treatment_type = ?, status = ?, notes = ?
+      SET appointment_date = COALESCE(?, appointment_date), 
+          appointment_time = COALESCE(?, appointment_time), 
+          patient_name = COALESCE(?, patient_name), 
+          patient_phone = COALESCE(?, patient_phone), 
+          treatment_type = ?, 
+          status = ?, 
+          notes = ?
       WHERE id = ? AND dentist_id = ?
-    `, [appointment_date, appointment_time, patient_name, patient_phone, treatment_type, status, notes, id, dentistId]);
+    `, [appointment_date, appointment_time, patient_name, patient_phone, safeTreatmentType, safeStatus, safeNotes, id, dentistId]);
 
     res.json({
       success: true,
@@ -280,7 +304,8 @@ const updateAppointment = async (req, res) => {
     console.error('Update appointment error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to update appointment'
+      message: 'Failed to update appointment',
+      error: error.message
     });
   }
 };
@@ -290,8 +315,11 @@ const cancelAppointment = async (req, res) => {
   try {
     const { id } = req.params;
     const { cancellation_reason } = req.body;
-    const dentistId = req.dentistId;
-    const cancelledBy = req.user.id;
+    const dentistId = parseInt(req.dentistId, 10);
+    const cancelledBy = parseInt(req.user.id, 10);
+
+    // Ensure optional field is null if undefined
+    const safeCancellationReason = cancellation_reason !== undefined ? cancellation_reason : null;
 
     // Check if appointment exists and belongs to this dentist
     const appointment = await executeQuery(`
@@ -311,7 +339,7 @@ const cancelAppointment = async (req, res) => {
       UPDATE appointments 
       SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = ?, cancellation_reason = ?
       WHERE id = ?
-    `, [cancelledBy, cancellation_reason, id]);
+    `, [cancelledBy, safeCancellationReason, id]);
 
     res.json({
       success: true,
@@ -322,7 +350,8 @@ const cancelAppointment = async (req, res) => {
     console.error('Cancel appointment error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to cancel appointment'
+      message: 'Failed to cancel appointment',
+      error: error.message
     });
   }
 };
@@ -331,7 +360,7 @@ const cancelAppointment = async (req, res) => {
 const completeAppointment = async (req, res) => {
   try {
     const { id } = req.params;
-    const dentistId = req.dentistId;
+    const dentistId = parseInt(req.dentistId, 10);
 
     // Check if appointment exists and belongs to this dentist
     const appointment = await executeQuery(`
@@ -362,7 +391,8 @@ const completeAppointment = async (req, res) => {
     console.error('Complete appointment error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to complete appointment'
+      message: 'Failed to complete appointment',
+      error: error.message
     });
   }
 };
@@ -371,7 +401,7 @@ const completeAppointment = async (req, res) => {
 const getAvailableTimeSlots = async (req, res) => {
   try {
     const { date } = req.params;
-    const dentistId = req.dentistId;
+    const dentistId = parseInt(req.dentistId, 10);
 
     // Define working hours (can be made configurable)
     const workingHours = [
@@ -405,7 +435,8 @@ const getAvailableTimeSlots = async (req, res) => {
     console.error('Get available time slots error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get available time slots'
+      message: 'Failed to get available time slots',
+      error: error.message
     });
   }
 };
@@ -414,7 +445,7 @@ const getAvailableTimeSlots = async (req, res) => {
 const getDailySchedule = async (req, res) => {
   try {
     const { date = moment().format('YYYY-MM-DD') } = req.query;
-    const dentistId = req.dentistId;
+    const dentistId = parseInt(req.dentistId, 10);
 
     // Get appointments for the day
     const appointments = await executeQuery(`
@@ -452,7 +483,8 @@ const getDailySchedule = async (req, res) => {
     console.error('Get daily schedule error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get daily schedule'
+      message: 'Failed to get daily schedule',
+      error: error.message
     });
   }
 };
