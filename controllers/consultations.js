@@ -165,7 +165,7 @@ const getConsultationById = async (req, res) => {
   }
 };
 
-// Create new consultation
+
 const createConsultation = async (req, res) => {
   try {
     const {
@@ -176,7 +176,7 @@ const createConsultation = async (req, res) => {
       amount_paid = 0,
       needs_followup = false
     } = req.body;
-    
+
     const dentistId = req.dentistId;
     const createdBy = req.user.id;
 
@@ -193,6 +193,15 @@ const createConsultation = async (req, res) => {
       });
     }
 
+    // Validate date_of_consultation
+    const consultationDate = new Date(date_of_consultation);
+    if (isNaN(consultationDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date_of_consultation format. Use YYYY-MM-DD'
+      });
+    }
+
     // Generate receipt number
     const receiptNumber = generateReceiptNumber(dentistId, 'CON');
 
@@ -202,7 +211,19 @@ const createConsultation = async (req, res) => {
         patient_id, dentist_id, date_of_consultation, type_of_prosthesis,
         total_price, amount_paid, needs_followup, created_by, receipt_number
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [patient_id, dentistId, date_of_consultation, type_of_prosthesis, total_price, amount_paid, needs_followup, createdBy, receiptNumber]);
+    `, [
+      patient_id,
+      dentistId,
+      date_of_consultation,
+      type_of_prosthesis,
+      total_price,
+      amount_paid,
+      needs_followup,
+      createdBy,
+      receiptNumber
+    ]);
+
+    const consultationId = result.insertId;
 
     // If there's an initial payment, record it
     if (amount_paid > 0) {
@@ -214,18 +235,73 @@ const createConsultation = async (req, res) => {
           amount_paid, payment_method, remaining_balance, receipt_number, created_by
         ) VALUES (?, ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
       `, [
-        result.insertId, patient_id, dentistId, 
+        consultationId,
+        patient_id,
+        dentistId,
         `${patient[0].first_name} ${patient[0].last_name}`,
-        date_of_consultation, amount_paid, (total_price - amount_paid),
-        paymentReceiptNumber, createdBy
+        date_of_consultation,
+        amount_paid,
+        total_price - amount_paid,
+        paymentReceiptNumber,
+        createdBy
       ]);
+    }
+
+    // If needs_followup is true, schedule a follow-up appointment
+    let followUpAppointment = null;
+    if (needs_followup) {
+      // Calculate follow-up date (7 days later)
+      const followUpDate = new Date(consultationDate);
+      followUpDate.setDate(consultationDate.getDate() + 7);
+      const followUpDateStr = followUpDate.toISOString().split('T')[0]; // YYYY-MM-DD
+
+      // Default appointment time
+      const appointmentTime = '09:00';
+
+      // Check for time slot availability
+      const existingAppointments = await executeQuery(`
+        SELECT id FROM appointments 
+        WHERE dentist_id = ? AND appointment_date = ? AND appointment_time = ? AND status != 'cancelled'
+      `, [dentistId, followUpDateStr, appointmentTime]);
+
+      if (existingAppointments.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Time slot ${appointmentTime} on ${followUpDateStr} is already taken`
+        });
+      }
+
+      // Create follow-up appointment
+      const appointmentResult = await executeQuery(`
+        INSERT INTO appointments (
+          patient_id, dentist_id, appointment_date, appointment_time,
+          patient_name, patient_phone, treatment_type, status, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        patient_id,
+        dentistId,
+        followUpDateStr,
+        appointmentTime,
+        `${patient[0].first_name} ${patient[0].last_name}`,
+        patient[0].phone,
+        'Follow-up',
+        'scheduled',
+        createdBy
+      ]);
+
+      followUpAppointment = {
+        id: appointmentResult.insertId,
+        appointment_date: followUpDateStr,
+        appointment_time: appointmentTime,
+        treatment_type: 'Follow-up'
+      };
     }
 
     res.status(201).json({
       success: true,
       message: 'Consultation created successfully',
       data: {
-        id: result.insertId,
+        id: consultationId,
         receipt_number: receiptNumber,
         patient_name: `${patient[0].first_name} ${patient[0].last_name}`,
         date_of_consultation,
@@ -233,7 +309,8 @@ const createConsultation = async (req, res) => {
         total_price,
         amount_paid,
         remaining_balance: total_price - amount_paid,
-        needs_followup
+        needs_followup,
+        follow_up_appointment: followUpAppointment
       }
     });
 
@@ -246,6 +323,7 @@ const createConsultation = async (req, res) => {
   }
 };
 
+module.exports = { createConsultation };
 // Update consultation
 const updateConsultation = async (req, res) => {
   try {

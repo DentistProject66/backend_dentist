@@ -1,3 +1,6 @@
-const crypto = require('crypto');
-const secret = crypto.randomBytes(32).toString('hex');
-console.log(secret);
+
+const bcrypt = require('bcryptjs');
+const password = "admin123"; // your new password
+bcrypt.hash(password, 10).then(hash => {
+  console.log("New hash:", hash);
+});
