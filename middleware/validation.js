@@ -1,5 +1,5 @@
 
-const { body, validationResult } = require('express-validator');
+const { body, param,validationResult } = require('express-validator');
 
 // Handle validation errors
 const handleValidationErrors = (req, res, next) => {
@@ -168,6 +168,50 @@ const validateAppointment = [
   handleValidationErrors
 ];
 
+const validateAppointmentUpdate = [
+  body('patient_id')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Valid patient ID is required'),
+  body('consultation_id')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Consultation ID must be a positive integer'),
+  body('appointment_date')
+    .optional()
+    .isISO8601()
+    .toDate()
+    .withMessage('Please provide a valid appointment date'),
+  body('appointment_time')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Please provide a valid time in HH:MM format'),
+  body('patient_name')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 200 })
+    .withMessage('Patient name must be between 2 and 200 characters'),
+  body('patient_phone')
+    .optional()
+    .isMobilePhone()
+    .withMessage('Please provide a valid phone number'),
+  body('treatment_type')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('Treatment type must be between 2 and 255 characters'),
+  body('status')
+    .optional()
+    .isIn(['confirmed', 'pending', 'completed', 'cancelled'])
+    .withMessage('Invalid status'),
+  body('notes')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Notes must not exceed 1000 characters'),
+  handleValidationErrors
+];
+
 const validateConsultationUpdate = [
   body('date_of_consultation')
     .optional()
@@ -242,6 +286,12 @@ const validateId = [
     .withMessage('ID must be a positive integer'),
   handleValidationErrors
 ];
+const validateParamId = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('ID must be a positive integer'),
+  handleValidationErrors
+];
 
 module.exports = {
   validateUserRegistration,
@@ -251,6 +301,8 @@ module.exports = {
   validateAppointment,
   validatePayment,
   validateId,
+  validateParamId,
   handleValidationErrors,
-  validateConsultationUpdate
+  validateConsultationUpdate,
+  validateAppointmentUpdate
 };
