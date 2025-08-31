@@ -5,7 +5,7 @@ const moment = require('moment');
 const getAppointments = async (req, res) => {
   try {
     const { page = 1, limit = 10, date, status, patient_id } = req.query;
-    const dentistId = req.dentistId;
+    const dentistId = parseInt(req.dentistId, 10); // Ensure integer
 
     // Ensure page and limit are valid integers
     const parsedPage = parseInt(page, 10) || 1;
@@ -33,10 +33,25 @@ const getAppointments = async (req, res) => {
       params.push(parseInt(patient_id, 10));
     }
 
-    // Debug parameters
-    console.log('Get appointments params:', { dentistId, page, limit, parsedPage, parsedLimit, offset, params, whereClause });
+    // Ensure LIMIT and OFFSET are integers
+    const limitParam = parseInt(parsedLimit, 10);
+    const offsetParam = parseInt(offset, 10);
 
-    // Get appointments with patient info
+    // Debug parameters
+    console.log('Get appointments params:', { 
+      dentistId, 
+      page, 
+      limit, 
+      parsedPage, 
+      parsedLimit, 
+      offset, 
+      limitParam, 
+      offsetParam, 
+      params, 
+      whereClause 
+    });
+
+    // Get appointments with patient info (inline LIMIT/OFFSET for debugging)
     const appointments = await executeQuery(`
       SELECT 
         a.*,
@@ -45,8 +60,8 @@ const getAppointments = async (req, res) => {
       JOIN patients p ON a.patient_id = p.id
       ${whereClause}
       ORDER BY a.appointment_date ASC, a.appointment_time ASC
-      LIMIT ? OFFSET ?
-    `, [...params, parsedLimit, offset]);
+      LIMIT ${limitParam} OFFSET ${offsetParam}
+    `, params);
 
     // Get total count
     const totalCount = await executeQuery(`
@@ -78,6 +93,9 @@ const getAppointments = async (req, res) => {
     });
   }
 };
+
+
+
 // Get appointments by date (calendar view)
 const getAppointmentsByDate = async (req, res) => {
   try {
