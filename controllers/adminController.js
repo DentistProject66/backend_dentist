@@ -101,7 +101,6 @@ const getAllUsers = async (req, res) => {
     });
   }
 };
-
 // Approve user registration
 const approveUser = async (req, res) => {
   try {
@@ -120,7 +119,6 @@ const approveUser = async (req, res) => {
         message: 'User not found or already processed'
       });
     }
-
     // Approve user
     await executeQuery(`
       UPDATE users 
