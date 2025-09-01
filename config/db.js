@@ -39,10 +39,16 @@ const testConnection = async () => {
 // Helper function to execute queries with error handling
 const executeQuery = async (sql, params = []) => {
   try {
-    const [rows] = await promisePool.execute(sql, params);
+    // Handle the case where params is undefined or null
+    const queryParams = params && Array.isArray(params) ? params : [];
+    
+    // Execute the query
+    const [rows] = await promisePool.execute(sql, queryParams);
     return rows;
   } catch (error) {
     console.error('Database query error:', error.message);
+    console.error('SQL:', sql);
+    console.error('Params:', params);
     throw error;
   }
 };
