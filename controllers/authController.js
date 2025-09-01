@@ -3,9 +3,11 @@ const jwt = require('jsonwebtoken');
 const { executeQuery } = require('../config/db');
 
 // Generate JWT token
-const generateToken = (userId) => {
-  return jwt.sign({ userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE
+const generateToken = (userId, role) => {
+  console.log('Generating token with userId:', userId, 'role:', role); // Debug
+
+  return jwt.sign({ userId, role }, process.env.JWT_SECRET || 'cddff1e9869fb158847363d6a2cbebf0b8aaae2669d10cb920b20c8218e68682', {
+    expiresIn: process.env.JWT_EXPIRE || '1h'
   });
 };
 
@@ -69,6 +71,8 @@ const login = async (req, res) => {
       [email]
     );
 
+    console.log('Database query result:', users); // Debug query result
+
     if (users.length === 0) {
       return res.status(401).json({
         success: false,
@@ -77,6 +81,7 @@ const login = async (req, res) => {
     }
 
     const user = users[0];
+    console.log('User object:', user); // Debug user object
 
     // Check if account is approved
     if (user.status !== 'approved') {
@@ -102,8 +107,8 @@ const login = async (req, res) => {
       });
     }
 
-    // Generate token
-    const token = generateToken(user.id);
+    // Generate token with role
+    const token = generateToken(user.id, user.role);
 
     // If user is assistant, get assigned dentist info
     let assignedDentist = null;

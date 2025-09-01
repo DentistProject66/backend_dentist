@@ -25,46 +25,70 @@ const getPendingRegistrations = async (req, res) => {
 };
 
 // Get all users with status
+// Get all users with status
+// Get all users with status
+// Get all users with status - Alternative approach
 const getAllUsers = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, role } = req.query;
-    const offset = (page - 1) * limit;
+    
+    // Safely parse integers with validation
+    const parsedPage = Math.max(1, parseInt(page) || 1);
+    const parsedLimit = Math.min(Math.max(1, parseInt(limit) || 10), 100); // Limit max to 100
+    const parsedOffset = (parsedPage - 1) * parsedLimit;
 
     let whereClause = '';
     let params = [];
 
-    if (status) {
-      whereClause += ' WHERE status = ?';
-      params.push(status);
+    // Build where clause and parameters
+    if (status && role) {
+      whereClause = 'WHERE status = ? AND role = ?';
+      params = [status, role];
+    } else if (status) {
+      whereClause = 'WHERE status = ?';
+      params = [status];
+    } else if (role) {
+      whereClause = 'WHERE role = ?';
+      params = [role];
     }
 
-    if (role) {
-      whereClause += status ? ' AND role = ?' : ' WHERE role = ?';
-      params.push(role);
-    }
+    console.log('getAllUsers - whereClause:', whereClause, 'params:', params, 'limit:', parsedLimit, 'offset:', parsedOffset);
 
-    const users = await executeQuery(`
+    // Main query for users - Use string interpolation for LIMIT/OFFSET to avoid MySQL2 issues
+    const userQuery = `
       SELECT id, email, first_name, last_name, phone, role, practice_name, status, created_at, approved_at
       FROM users 
       ${whereClause}
       ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, parseInt(limit), offset]);
+      LIMIT ${parsedLimit} OFFSET ${parsedOffset}
+    `;
 
-    // Get total count
-    const totalCount = await executeQuery(`
-      SELECT COUNT(*) as count FROM users ${whereClause}
-    `, params);
+    const users = await executeQuery(userQuery, params);
+
+    // Total count query
+    let totalCount;
+    if (params.length > 0) {
+      totalCount = await executeQuery(`
+        SELECT COUNT(*) as count 
+        FROM users 
+        ${whereClause}
+      `, params);
+    } else {
+      totalCount = await executeQuery(`
+        SELECT COUNT(*) as count 
+        FROM users
+      `);
+    }
 
     res.json({
       success: true,
       data: {
         users,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: parsedPage,
+          limit: parsedLimit,
           total: totalCount[0].count,
-          pages: Math.ceil(totalCount[0].count / limit)
+          pages: Math.ceil(totalCount[0].count / parsedLimit)
         }
       }
     });
