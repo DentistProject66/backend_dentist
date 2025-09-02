@@ -5,10 +5,44 @@ const { executeQuery } = require('../config/db');
 // Generate JWT token
 const generateToken = (userId, role) => {
   console.log('Generating token with userId:', userId, 'role:', role); // Debug
-
   return jwt.sign({ userId, role }, process.env.JWT_SECRET || 'cddff1e9869fb158847363d6a2cbebf0b8aaae2669d10cb920b20c8218e68682', {
     expiresIn: process.env.JWT_EXPIRE || '1h'
   });
+};
+
+// Assign assistant to dentist based on practice_name
+const assignAssistant = async (newUserId, role, practice_name) => {
+  try {
+    // Only proceed if the new user is an assistant or dentist
+    if (role !== 'assistant' && role !== 'dentist') return;
+
+    // Find matching users of the opposite role with the same practice_name and approved status
+    const oppositeRole = role === 'assistant' ? 'dentist' : 'assistant';
+    const matchingUsers = await executeQuery(
+      'SELECT id FROM users WHERE role = ? AND practice_name = ? AND status = ?',
+      [oppositeRole, practice_name, 'approved']
+    );
+
+    if (matchingUsers.length > 0) {
+      const oppositeUserId = matchingUsers[0].id; // Use first match (adjust if multiple matches needed)
+      const isAssignmentExists = await executeQuery(
+        'SELECT id FROM user_assignments WHERE dentist_id = ? AND assistant_id = ?',
+        [role === 'dentist' ? newUserId : oppositeUserId, role === 'assistant' ? newUserId : oppositeUserId]
+      );
+
+      if (!isAssignmentExists.length) {
+        await executeQuery(
+          'INSERT INTO user_assignments (dentist_id, assistant_id) VALUES (?, ?)',
+          [role === 'dentist' ? newUserId : oppositeUserId, role === 'assistant' ? newUserId : oppositeUserId]
+        );
+        console.log(`Assigned ${role} ${newUserId} to ${oppositeRole} ${oppositeUserId} with practice_name: ${practice_name}`);
+      }
+    } else {
+      console.log(`No ${oppositeRole} found with practice_name: ${practice_name} for ${role} ${newUserId}`);
+    }
+  } catch (error) {
+    console.error('Assignment error:', error);
+  }
 };
 
 // Register new user (dentist or assistant)
@@ -38,11 +72,16 @@ const register = async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [email, hashedPassword, first_name, last_name, phone, role, practice_name]);
 
+    const newUserId = result.insertId;
+
+    // Trigger assignment check after registration
+    await assignAssistant(newUserId, role, practice_name);
+
     res.status(201).json({
       success: true,
       message: 'Registration successful. Please wait for admin approval.',
       data: {
-        userId: result.insertId,
+        userId: newUserId,
         email,
         first_name,
         last_name,
@@ -275,10 +314,84 @@ const changePassword = async (req, res) => {
   }
 };
 
+// Approve user and handle assignments (optional, if used)
+const approveUser = async (req, res) => {
+  try {
+    const { userId, status } = req.body;
+
+    if (status !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: 'Status must be "approved" for this action.'
+      });
+    }
+
+    const user = await executeQuery(
+      'SELECT id, role, practice_name, status FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (!user.length || user[0].status !== 'pending') {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found or not pending approval.'
+      });
+    }
+
+    await executeQuery(
+      'UPDATE users SET status = ? WHERE id = ?',
+      [status, userId]
+    );
+
+    // Trigger assignment check after approval (optional, if moved from register)
+    await assignAssistant(userId, user[0].role, user[0].practice_name);
+
+    res.json({
+      success: true,
+      message: 'User approved successfully.'
+    });
+  } catch (error) {
+    console.error('Approve user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to approve user.'
+    });
+  }
+};
+
+// Create a new consultation
+const createConsultation = async (req, res) => {
+  try {
+    const { patientId, date, typeOfProsthesis, totalPrice, amountPaid } = req.body;
+    const dentistId = req.dentistId; // Set by checkDentistAccess
+
+    // Insert consultation (example logic)
+    const result = await executeQuery(
+      'INSERT INTO consultations (dentist_id, patient_id, date, type_of_prosthesis, total_price, amount_paid) VALUES (?, ?, ?, ?, ?, ?)',
+      [dentistId, patientId, date, typeOfProsthesis, totalPrice, amountPaid]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Consultation created successfully',
+      data: { consultationId: result.insertId }
+    });
+  } catch (error) {
+    console.error('Create consultation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create consultation'
+    });
+  }
+};
+
 module.exports = {
   register,
   login,
   getProfile,
   updateProfile,
-  changePassword
+  changePassword,
+  approveUser,
+  createConsultation,
+  assignAssistant
 };
