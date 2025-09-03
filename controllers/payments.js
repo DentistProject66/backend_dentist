@@ -10,11 +10,24 @@ const generateReceiptNumber = (dentistId) => {
 };
 
 // Get all payments for a dentist
+// Get all payments for a dentist
 const getPayments = async (req, res) => {
   try {
     const { page = 1, limit = 10, date_from, date_to, patient_id, payment_method } = req.query;
     const dentistId = req.dentistId;
-    const offset = (page - 1) * limit;
+    
+    // Convert to integers and validate
+    const pageNum = parseInt(page) || 1;
+    const limitNum = Math.min(parseInt(limit) || 10, 100); // Cap at 100
+    const offset = (pageNum - 1) * limitNum;
+
+    // Validate parameters
+    if (pageNum < 1 || limitNum < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid pagination parameters'
+      });
+    }
 
     let whereClause = 'WHERE p.dentist_id = ?';
     let params = [dentistId];
@@ -51,8 +64,8 @@ const getPayments = async (req, res) => {
       JOIN consultations c ON p.consultation_id = c.id
       ${whereClause}
       ORDER BY p.payment_date DESC, p.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, parseInt(limit), offset]);
+      LIMIT ${limitNum} OFFSET ${offset}
+    `, params);
 
     // Get total count
     const totalCount = await executeQuery(`
@@ -62,12 +75,12 @@ const getPayments = async (req, res) => {
       ${whereClause}
     `, params);
 
-    // Get summary statistics
+    // Get summary statistics - Specify p.amount_paid to resolve ambiguity
     const summary = await executeQuery(`
       SELECT 
         COUNT(*) as total_payments,
-        SUM(amount_paid) as total_amount,
-        AVG(amount_paid) as average_payment
+        SUM(p.amount_paid) as total_amount,
+        AVG(p.amount_paid) as average_payment
       FROM payments p
       JOIN consultations c ON p.consultation_id = c.id
       ${whereClause}
@@ -79,10 +92,10 @@ const getPayments = async (req, res) => {
         payments,
         summary: summary[0],
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNum,
+          limit: limitNum,
           total: totalCount[0].count,
-          pages: Math.ceil(totalCount[0].count / limit)
+          pages: Math.ceil(totalCount[0].count / limitNum)
         }
       }
     });
@@ -91,11 +104,11 @@ const getPayments = async (req, res) => {
     console.error('Get payments error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get payments'
+      message: 'Failed to get payments',
+      error: error.message
     });
   }
 };
-
 // Get payment by ID
 const getPaymentById = async (req, res) => {
   try {
@@ -320,110 +333,141 @@ const deletePayment = async (req, res) => {
   }
 };
 
-// Get financial reports
+// Get financial reports - FIXED VERSION
+// Get financial reports - FIXED VERSION
+// Get financial reports - FIXED VERSION
 const getFinancialReports = async (req, res) => {
   try {
     const { period = 'month', date_from, date_to } = req.query;
     const dentistId = req.dentistId;
+    
+    console.log('=== DEBUG INFO ===');
+    console.log('req.dentistId:', dentistId, 'type:', typeof dentistId);
+    console.log('req.user:', req.user);
+    console.log('Period:', period);
+    console.log('==================');
 
     let dateFilter = '';
-    let params = [dentistId];
+    let params = [parseInt(dentistId)];
 
     if (date_from && date_to) {
-      dateFilter = 'AND p.payment_date BETWEEN ? AND ?';
+      dateFilter = 'AND DATE(payment_date) BETWEEN ? AND ?';
       params.push(date_from, date_to);
     } else {
-      // Default periods
       switch (period) {
         case 'today':
-          dateFilter = 'AND p.payment_date = CURDATE()';
+          dateFilter = 'AND DATE(payment_date) = CURDATE()';
           break;
         case 'week':
-          dateFilter = 'AND p.payment_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+          dateFilter = 'AND DATE(payment_date) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
           break;
         case 'month':
-          dateFilter = 'AND p.payment_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+          dateFilter = 'AND DATE(payment_date) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
           break;
         case 'year':
-          dateFilter = 'AND p.payment_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)';
+          dateFilter = 'AND DATE(payment_date) >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)';
           break;
       }
     }
 
-    // Daily income summary
+    // First, let's check if we have any payments at all for this dentist
+    const totalPayments = await executeQuery(`
+      SELECT COUNT(*) as count FROM payments WHERE dentist_id = ?
+    `, [parseInt(dentistId)]);
+
+    console.log(`Total payments for dentist ${dentistId}:`, totalPayments[0].count);
+
+    // Also check what dentist IDs exist in the database
+    const allDentistIds = await executeQuery(`
+      SELECT DISTINCT dentist_id FROM payments ORDER BY dentist_id
+    `);
+    console.log('All dentist IDs in payments table:', allDentistIds.map(row => row.dentist_id));
+
+    // Daily income query
     const dailyIncome = await executeQuery(`
       SELECT 
-        p.payment_date,
-        COUNT(*) as payment_count,
-        SUM(p.amount_paid) as daily_income
-      FROM payments p
-      WHERE p.dentist_id = ? ${dateFilter}
-      GROUP BY p.payment_date
-      ORDER BY p.payment_date DESC
+        DATE(payment_date) as payment_date, 
+        COUNT(*) as payment_count, 
+        SUM(amount_paid) as daily_income
+      FROM payments
+      WHERE dentist_id = ? ${dateFilter}
+      GROUP BY DATE(payment_date)
+      ORDER BY payment_date DESC
       LIMIT 30
     `, params);
 
-    // Payment method breakdown
+    console.log(`Daily income results:`, dailyIncome.length);
+
+    // Payment methods query
     const paymentMethods = await executeQuery(`
       SELECT 
-        p.payment_method,
-        COUNT(*) as payment_count,
-        SUM(p.amount_paid) as total_amount
-      FROM payments p
-      WHERE p.dentist_id = ? ${dateFilter}
-      GROUP BY p.payment_method
+        payment_method, 
+        COUNT(*) as payment_count, 
+        SUM(amount_paid) as total_amount
+      FROM payments
+      WHERE dentist_id = ? ${dateFilter}
+      GROUP BY payment_method
     `, params);
 
-    // Outstanding payments
+    // Outstanding payments query
     const outstandingPayments = await executeQuery(`
       SELECT 
-        c.id as consultation_id,
+        c.id as consultation_id, 
         CONCAT(pat.first_name, ' ', pat.last_name) as patient_name,
-        pat.phone,
-        c.date_of_consultation,
-        c.type_of_prosthesis,
+        pat.phone, 
+        c.date_of_consultation, 
+        c.type_of_prosthesis, 
         c.total_price,
-        c.amount_paid,
-        c.remaining_balance,
+        c.amount_paid, 
+        c.remaining_balance, 
         DATEDIFF(CURDATE(), c.date_of_consultation) as days_overdue
       FROM consultations c
       JOIN patients pat ON c.patient_id = pat.id
       WHERE c.dentist_id = ? AND c.remaining_balance > 0
-      ORDER BY c.date_of_consultation ASC
-    `, [dentistId]);
+    `, [parseInt(dentistId)]);
 
-    // Total statistics
+    // Total stats query
     const totalStats = await executeQuery(`
       SELECT 
-        COUNT(*) as total_payments,
-        SUM(p.amount_paid) as total_income,
-        AVG(p.amount_paid) as average_payment,
-        MIN(p.payment_date) as first_payment_date,
-        MAX(p.payment_date) as last_payment_date
-      FROM payments p
-      WHERE p.dentist_id = ? ${dateFilter}
+        COUNT(*) as total_payments, 
+        COALESCE(SUM(amount_paid), 0) as total_income,
+        COALESCE(AVG(amount_paid), 0) as average_payment, 
+        MIN(DATE(payment_date)) as first_payment_date,
+        MAX(DATE(payment_date)) as last_payment_date
+      FROM payments
+      WHERE dentist_id = ? ${dateFilter}
     `, params);
 
-    res.json({
+    // If no data found, return empty but successful response
+    const result = {
       success: true,
       data: {
         period,
-        total_statistics: totalStats[0],
-        daily_income: dailyIncome,
-        payment_methods: paymentMethods,
-        outstanding_payments: outstandingPayments
-      }
-    });
+        total_statistics: totalStats[0] || { 
+          total_payments: 0, 
+          total_income: 0, 
+          average_payment: 0, 
+          first_payment_date: null, 
+          last_payment_date: null 
+        },
+        daily_income: dailyIncome || [],
+        payment_methods: paymentMethods || [],
+        outstanding_payments: outstandingPayments || [],
+      },
+    };
+
+    console.log('Final result:', JSON.stringify(result, null, 2));
+    res.json(result);
 
   } catch (error) {
     console.error('Get financial reports error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to generate financial reports'
+      message: 'Failed to generate financial reports',
+      error: error.message,
     });
   }
 };
-
 // Print payment receipt
 const printPaymentReceipt = async (req, res) => {
   try {
