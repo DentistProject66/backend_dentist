@@ -10,11 +10,11 @@ router.use(checkDentistAccess);
 router.use(blockPaymentAccess);
 
 router.get('/', getPayments);
+router.get('/reports', getFinancialReports); // Move this BEFORE /:id
 router.get('/:id', getPaymentById);
 router.post('/', validatePayment, createPayment);
 router.put('/:id', validatePayment, updatePayment);
 router.delete('/:id', deletePayment);
-router.get('/reports', getFinancialReports);
 router.get('/:id/receipt', printPaymentReceipt);
 
 module.exports = router;
