@@ -529,6 +529,126 @@ const printPaymentReceipt = async (req, res) => {
   }
 };
 
+
+
+const editPaymentByPatient = async (req, res) => {
+  try {
+    const { payment_id } = req.params; // Payment ID from URL
+    const { patient_id, amount_paid, payment_date, payment_method } = req.body; // New payment details
+    const dentistId = req.dentistId;
+
+    // Validate input
+    if (!patient_id || !payment_id || !amount_paid || !payment_date || !payment_method) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: patient_id, payment_id, amount_paid, payment_date, payment_method',
+      });
+    }
+
+    // Validate amount_paid
+    const newAmountPaid = parseFloat(amount_paid);
+    if (isNaN(newAmountPaid) || newAmountPaid < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount paid must be a non-negative number',
+      });
+    }
+
+    // Fetch payment details
+    const payment = await executeQuery(`
+      SELECT p.id, p.amount_paid, p.consultation_id, p.patient_id, c.total_price, c.amount_paid as consultation_amount_paid
+      FROM payments p
+      JOIN consultations c ON p.consultation_id = c.id
+      WHERE p.id = ? AND p.dentist_id = ? AND p.patient_id = ?
+    `, [payment_id, dentistId, patient_id]);
+
+    if (payment.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found or does not belong to the specified patient and dentist',
+      });
+    }
+
+    const paymentData = payment[0];
+    const consultationId = paymentData.consultation_id;
+    const oldAmountPaid = parseFloat(paymentData.amount_paid);
+    const totalPrice = parseFloat(paymentData.total_price);
+
+    // Calculate total amount paid for the consultation (excluding this payment)
+    const otherPayments = await executeQuery(`
+      SELECT COALESCE(SUM(amount_paid), 0) as total_other_payments
+      FROM payments
+      WHERE consultation_id = ? AND id != ? AND dentist_id = ?
+    `, [consultationId, payment_id, dentistId]);
+
+    const totalOtherPayments = parseFloat(otherPayments[0].total_other_payments);
+
+    // Validate new amount_paid
+    const maxAllowablePayment = totalPrice - totalOtherPayments;
+    if (newAmountPaid > maxAllowablePayment) {
+      return res.status(400).json({
+        success: false,
+        message: `New payment amount (${newAmountPaid}) exceeds remaining balance (${maxAllowablePayment}) for this consultation`,
+      });
+    }
+
+    // Calculate new consultation amount paid
+    const newConsultationAmountPaid = totalOtherPayments + newAmountPaid;
+    // Note: remaining_balance in consultations table is generated (total_price - amount_paid),
+    // so we only update amount_paid, and the database handles remaining_balance
+
+    // Fetch the updated remaining_balance from consultations after calculating
+    const newRemainingBalance = totalPrice - newConsultationAmountPaid;
+
+    // Update payment and consultation in a transaction
+    const queries = [
+      // Update payment
+      {
+        sql: `
+          UPDATE payments 
+          SET amount_paid = ?, payment_date = ?, payment_method = ?, remaining_balance = ?
+          WHERE id = ? AND dentist_id = ? AND patient_id = ?
+        `,
+        params: [newAmountPaid, payment_date, payment_method, newRemainingBalance, payment_id, dentistId, patient_id],
+      },
+      // Update consultation (only amount_paid, as remaining_balance is generated)
+      {
+        sql: `
+          UPDATE consultations 
+          SET amount_paid = ?
+          WHERE id = ? AND dentist_id = ?
+        `,
+        params: [newConsultationAmountPaid, consultationId, dentistId],
+      },
+    ];
+
+    await executeTransaction(queries);
+
+    res.json({
+      success: true,
+      message: 'Payment updated successfully',
+      data: {
+        id: payment_id,
+        patient_id,
+        consultation_id: consultationId,
+        amount_paid: newAmountPaid.toFixed(2),
+        payment_date,
+        payment_method,
+        remaining_balance: newRemainingBalance.toFixed(2),
+      },
+    });
+
+  } catch (error) {
+    console.error('Edit payment by patient error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update payment',
+      error: error.message,
+    });
+  }
+};
+
+
 module.exports = {
   getPayments,
   getPaymentById,
@@ -536,5 +656,6 @@ module.exports = {
   updatePayment,
   deletePayment,
   getFinancialReports,
-  printPaymentReceipt
+  printPaymentReceipt,
+  editPaymentByPatient
 };
