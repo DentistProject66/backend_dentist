@@ -135,8 +135,10 @@ const limiter = rateLimit({
 app.use(limiter);
 
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-  credentials: true,
+ origin: [
+    'http://localhost:3000',        // for local development
+    'https://frontend-dentist.vercel.app'  // your hosted frontend
+  ],  credentials: true,
   optionsSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
