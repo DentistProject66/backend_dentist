@@ -121,8 +121,9 @@ const routes = require('./routes');
 const db = require('./config/db'); // Make sure this points to your actual db connection file
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
-
+const HOST = process.env.HOST || '0.0.0.0';
 app.use(helmet());
 
 const limiter = rateLimit({
@@ -275,10 +276,13 @@ const startServer = async () => {
       console.error('Failed to connect to database. Exiting...');
       process.exit(1);
     }
+    server = app.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+});
 
-    server = app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-    });
+    // server = app.listen(PORT, () => {
+    //   console.log(`Server running on http://localhost:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+    // });
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
