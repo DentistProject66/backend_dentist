@@ -153,6 +153,133 @@ const getPaymentById = async (req, res) => {
 };
 
 // Create new payment
+
+// Create new payment
+// const createPayment = async (req, res) => {
+//   try {
+//     const {
+//       consultation_id,
+//       patient_id,
+//       patient_name,
+//       payment_date,
+//       amount_paid,
+//       payment_method
+//     } = req.body;
+//     const dentistId = req.dentistId;
+//     const createdBy = req.user.id;
+
+//     console.log('Create payment request:', { consultation_id, patient_id, patient_name, payment_date, amount_paid, payment_method, dentistId });
+
+//     // Validate required fields
+//     if (!consultation_id || !patient_id || !patient_name || !payment_date || !amount_paid || !payment_method) {
+//       console.log('Missing required fields');
+//       return res.status(400).json({
+//         success: false,
+//         message: 'All fields (consultation_id, patient_id, patient_name, payment_date, amount_paid, payment_method) are required'
+//       });
+//     }
+
+//     // Validate amount_paid
+//     const parsedAmountPaid = parseFloat(amount_paid);
+//     if (isNaN(parsedAmountPaid) || parsedAmountPaid <= 0) {
+//       console.log('Invalid amount_paid:', amount_paid);
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Amount paid must be a positive number'
+//       });
+//     }
+
+//     // Fetch consultation details
+//     const [consultation] = await executeQuery(`
+//       SELECT id, total_price, amount_paid, remaining_balance 
+//       FROM consultations 
+//       WHERE id = ? AND dentist_id = ?
+//     `, [consultation_id, dentistId]);
+
+//     console.log('Consultation data:', consultation);
+
+//     if (!consultation) {
+//       console.log('Consultation not found for id:', consultation_id);
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Consultation not found or does not belong to your practice'
+//       });
+//     }
+
+//     // Log current state
+//     console.log('Current state:', {
+//       total_price: consultation.total_price,
+//       amount_paid: consultation.amount_paid,
+//       remaining_balance: consultation.remaining_balance,
+//       new_payment: parsedAmountPaid
+//     });
+
+//     // Check if payment exceeds remaining balance
+//     const currentRemainingBalance = parseFloat(consultation.remaining_balance || 0);
+//     if (parsedAmountPaid > currentRemainingBalance) {
+//       console.log('Payment exceeds remaining balance:', { parsedAmountPaid, currentRemainingBalance });
+//       return res.status(400).json({
+//         success: false,
+//         message: `Payment amount cannot exceed remaining balance of ${currentRemainingBalance}`
+//       });
+//     }
+
+//     // Calculate new values
+//     const newAmountPaid = parseFloat(consultation.amount_paid || 0) + parsedAmountPaid;
+//     const newRemainingBalance = parseFloat(consultation.total_price) - newAmountPaid;
+//     console.log('Calculated:', { newAmountPaid, newRemainingBalance });
+
+//     // Generate receipt number
+//     const receiptNumber = generateReceiptNumber(dentistId);
+
+//     // Insert payment and update consultation in transaction
+//     const queries = [
+//       {
+//         sql: `INSERT INTO payments (
+//           consultation_id, patient_id, dentist_id, patient_name, payment_date,
+//           amount_paid, payment_method, receipt_number, created_by
+//         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//         params: [consultation_id, patient_id, dentistId, patient_name, payment_date, parsedAmountPaid.toFixed(2), payment_method, receiptNumber, createdBy]
+//       },
+//       {
+//         sql: `UPDATE consultations 
+//               SET amount_paid = ? 
+//               WHERE id = ?`,
+//         params: [newAmountPaid.toFixed(2), consultation_id]
+//       }
+//     ];
+
+//     const [paymentResult] = await executeTransaction(queries);
+//     console.log('Payment created:', paymentResult);
+
+//     res.status(201).json({
+//       success: true,
+//       message: 'Payment recorded successfully',
+//       data: {
+//         id: paymentResult.insertId,
+//         consultation_id,
+//         patient_id,
+//         patient_name,
+//         payment_date,
+//         amount_paid: parsedAmountPaid.toFixed(2),
+//         payment_method,
+//         receipt_number: receiptNumber,
+//         remaining_balance: newRemainingBalance.toFixed(2)
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error('Create payment error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Failed to record payment',
+//       error: error.message
+//     });
+//   }
+// };
+
+
+// Create new payment - FIXED VERSION
 const createPayment = async (req, res) => {
   try {
     const {
@@ -163,70 +290,109 @@ const createPayment = async (req, res) => {
       amount_paid,
       payment_method
     } = req.body;
-    
     const dentistId = req.dentistId;
     const createdBy = req.user.id;
 
-    // Verify consultation belongs to this dentist and get current balance
-    const consultation = await executeQuery(`
+    console.log('Create payment request:', { consultation_id, patient_id, patient_name, payment_date, amount_paid, payment_method, dentistId });
+
+    // Validate required fields
+    if (!consultation_id || !patient_id || !patient_name || !payment_date || !amount_paid || !payment_method) {
+      console.log('Missing required fields');
+      return res.status(400).json({
+        success: false,
+        message: 'All fields (consultation_id, patient_id, patient_name, payment_date, amount_paid, payment_method) are required'
+      });
+    }
+
+    // Validate amount_paid
+    const parsedAmountPaid = parseFloat(amount_paid);
+    if (isNaN(parsedAmountPaid) || parsedAmountPaid <= 0) {
+      console.log('Invalid amount_paid:', amount_paid);
+      return res.status(400).json({
+        success: false,
+        message: 'Amount paid must be a positive number'
+      });
+    }
+
+    // Fetch consultation details
+    const [consultation] = await executeQuery(`
       SELECT id, total_price, amount_paid, remaining_balance 
       FROM consultations 
       WHERE id = ? AND dentist_id = ?
     `, [consultation_id, dentistId]);
 
-    if (consultation.length === 0) {
+    console.log('Consultation data:', consultation);
+
+    if (!consultation) {
+      console.log('Consultation not found for id:', consultation_id);
       return res.status(404).json({
         success: false,
         message: 'Consultation not found or does not belong to your practice'
       });
     }
 
-    const consultationData = consultation[0];
-
-    // Check if payment amount doesn't exceed remaining balance
-    if (amount_paid > consultationData.remaining_balance) {
+    // Check if payment exceeds remaining balance
+    const currentRemainingBalance = parseFloat(consultation.remaining_balance || 0);
+    if (parsedAmountPaid > currentRemainingBalance) {
+      console.log('Payment exceeds remaining balance:', { parsedAmountPaid, currentRemainingBalance });
       return res.status(400).json({
         success: false,
-        message: `Payment amount cannot exceed remaining balance of ${consultationData.remaining_balance}`
+        message: `Payment amount cannot exceed remaining balance of ${currentRemainingBalance}`
       });
     }
 
+    // Calculate new values
+    const newAmountPaid = parseFloat(consultation.amount_paid || 0) + parsedAmountPaid;
+    const newRemainingBalance = parseFloat(consultation.total_price) - newAmountPaid;
+    console.log('Calculated:', { newAmountPaid, newRemainingBalance });
+
     // Generate receipt number
     const receiptNumber = generateReceiptNumber(dentistId);
-    const newRemainingBalance = consultationData.remaining_balance - amount_paid;
 
-    // Create payment and update consultation in transaction
+    // Insert payment and update consultation in transaction
     const queries = [
-      // Insert payment
       {
         sql: `INSERT INTO payments (
           consultation_id, patient_id, dentist_id, patient_name, payment_date,
           amount_paid, payment_method, remaining_balance, receipt_number, created_by
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        params: [consultation_id, patient_id, dentistId, patient_name, payment_date, amount_paid, payment_method, newRemainingBalance, receiptNumber, createdBy]
+        params: [
+          consultation_id, 
+          patient_id, 
+          dentistId, 
+          patient_name, 
+          payment_date, 
+          parsedAmountPaid.toFixed(2), 
+          payment_method, 
+          newRemainingBalance.toFixed(2), // ADDED: Include remaining_balance in INSERT
+          receiptNumber, 
+          createdBy
+        ]
       },
-      // Update consultation amount_paid
       {
         sql: `UPDATE consultations 
-              SET amount_paid = amount_paid + ? 
+              SET amount_paid = ? 
               WHERE id = ?`,
-        params: [amount_paid, consultation_id]
+        params: [newAmountPaid.toFixed(2), consultation_id]
       }
     ];
 
-    const results = await executeTransaction(queries);
-    const paymentId = results[0].insertId;
+    const [paymentResult] = await executeTransaction(queries);
+    console.log('Payment created:', paymentResult);
 
     res.status(201).json({
       success: true,
       message: 'Payment recorded successfully',
       data: {
-        id: paymentId,
-        receipt_number: receiptNumber,
-        amount_paid,
-        payment_method,
+        id: paymentResult.insertId,
+        consultation_id,
+        patient_id,
+        patient_name,
         payment_date,
-        remaining_balance: newRemainingBalance
+        amount_paid: parsedAmountPaid.toFixed(2),
+        payment_method,
+        receipt_number: receiptNumber,
+        remaining_balance: newRemainingBalance.toFixed(2)
       }
     });
 
@@ -234,7 +400,8 @@ const createPayment = async (req, res) => {
     console.error('Create payment error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to record payment'
+      message: 'Failed to record payment',
+      error: error.message
     });
   }
 };

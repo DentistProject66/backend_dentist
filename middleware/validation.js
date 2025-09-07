@@ -272,9 +272,9 @@ const validatePayment = [
   body('payment_method')
     .isIn(['cash', 'check', 'card'])
     .withMessage('Payment method must be cash, check, or card'),
-  body('remaining_balance')
-    .isFloat({ min: 0 })
-    .withMessage('Remaining balance must be 0 or greater'),
+  // body('remaining_balance')
+  //   .isFloat({ min: 0 })
+  //   .withMessage('Remaining balance must be 0 or greater'),
   handleValidationErrors
 ];
 
