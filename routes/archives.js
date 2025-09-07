@@ -254,4 +254,73 @@ router.post('/restore/:id', async (req, res) => {
     });
   }
 });
+
+
+
+
+// Delete archived record and related payments
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const dentistId = req.dentistId;
+
+    // Get the archive record
+    const archive = await executeQuery(`
+      SELECT * FROM archives 
+      WHERE id = ? AND dentist_id = ?
+    `, [id, dentistId]);
+
+    if (archive.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Archived record not found'
+      });
+    }
+
+    const archiveData = archive[0];
+    
+    // Parse the JSON data
+    let data;
+    try {
+      data = typeof archiveData.data_json === 'string' 
+        ? JSON.parse(archiveData.data_json) 
+        : archiveData.data_json;
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid archive data format'
+      });
+    }
+
+    // Delete related payments if the archived record is for a patient
+    if (archiveData.original_table === 'patients') {
+      await executeQuery(`
+        DELETE FROM payments 
+        WHERE patient_id = ? AND dentist_id = ?
+      `, [data.patient.id, dentistId]);
+    } else if (archiveData.original_table === 'consultations') {
+      // Delete payments associated with this consultation
+      await executeQuery(`
+        DELETE FROM payments 
+        WHERE consultation_id = ? AND dentist_id = ?
+      `, [data.consultation.id, dentistId]);
+    }
+
+    // Delete the archive record
+    await executeQuery('DELETE FROM archives WHERE id = ?', [id]);
+
+    res.json({
+      success: true,
+      message: 'Archived record and related payments deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete archive error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete archived record',
+      error: error.message
+    });
+  }
+});
 module.exports = router;
