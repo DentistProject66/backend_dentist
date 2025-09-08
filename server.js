@@ -138,7 +138,7 @@ app.use(limiter);
 const corsOptions = {
  origin: [
     'http://localhost:3000',        // for local development
-    'https://cabinetdentaire-chi.vercel.app'  // your hosted frontend
+    'https://cabinetdentairesite.vercel.app'  // your hosted frontend
   ],  credentials: true,
   optionsSuccessStatus: 200,
 };
