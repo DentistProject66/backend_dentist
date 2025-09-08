@@ -356,6 +356,242 @@ const getConsultationById = async (req, res) => {
 //     });
 //   }
 // };
+// const createConsultation = async (req, res) => {
+//   try {
+//     const {
+//       first_name,
+//       last_name,
+//       phone,
+//       date_of_consultation,
+//       type_of_prosthesis,
+//       teinte, // Added teinte field
+//       total_price = 0,
+//       amount_paid = 0,
+//       needs_followup = false,
+//       follow_up_date,
+//       follow_up_time = '09:00' // Default to 9:00 AM if not provided
+//     } = req.body;
+
+//     const dentistId = req.dentistId;
+//     const createdBy = req.user.id;
+
+//     // Validate required patient fields
+//     if (!first_name || !last_name) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'First name and last name are required'
+//       });
+//     }
+
+//     // Validate date_of_consultation
+//     const consultationDate = new Date(date_of_consultation);
+//     if (isNaN(consultationDate)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Invalid date_of_consultation format. Use YYYY-MM-DD'
+//       });
+//     }
+
+//     // Validate follow_up_date and follow_up_time if needs_followup is true
+//     let followUpDateStr = null;
+//     let followUpTimeStr = '09:00';
+    
+//     if (needs_followup) {
+//       if (!follow_up_date) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'follow_up_date is required when needs_followup is true'
+//         });
+//       }
+      
+//       if (!follow_up_time) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'follow_up_time is required when needs_followup is true'
+//         });
+//       }
+
+//       const followUpDate = new Date(follow_up_date);
+//       if (isNaN(followUpDate)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Invalid follow_up_date format. Use YYYY-MM-DD'
+//         });
+//       }
+
+//       // Validate time format
+//       const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+//       if (!timeRegex.test(follow_up_time)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Invalid follow_up_time format. Use HH:MM (24-hour format)'
+//         });
+//       }
+
+//       followUpDateStr = follow_up_date;
+//       followUpTimeStr = follow_up_time;
+//     }
+
+//     // Validate teinte (optional, but if provided, ensure it's a string and reasonable length)
+//     if (teinte && (typeof teinte !== 'string' || teinte.length > 50)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Invalid teinte value. Must be a string with max length of 50 characters'
+//       });
+//     }
+
+//     // Generate receipt numbers
+//     const consultationReceiptNumber = generateReceiptNumber(dentistId, 'CON');
+//     const paymentReceiptNumber = amount_paid > 0 ? generateReceiptNumber(dentistId, 'PAY') : null;
+
+//     // Calculate remaining_balance for response and payments table
+//     const remaining_balance = total_price - amount_paid;
+
+//     // Insert patient first to get patient_id
+//     const patientResult = await executeQuery(
+//       `
+//         INSERT INTO patients (
+//           dentist_id, first_name, last_name, phone, created_by
+//         ) VALUES (?, ?, ?, ?, ?)
+//       `,
+//       [dentistId, first_name, last_name, phone || null, createdBy]
+//     );
+//     const patientId = patientResult.insertId;
+
+//     // Prepare transaction queries
+//     const queries = [
+//       // Create consultation
+//       {
+//         sql: `
+//           INSERT INTO consultations (
+//             patient_id, dentist_id, date_of_consultation, type_of_prosthesis,
+//             teinte, total_price, amount_paid, needs_followup, created_by, receipt_number
+//           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+//         `,
+//         params: [
+//           patientId,
+//           dentistId,
+//           date_of_consultation,
+//           type_of_prosthesis,
+//           teinte || null, // Use provided teinte or null
+//           total_price,
+//           amount_paid,
+//           needs_followup,
+//           createdBy,
+//           consultationReceiptNumber
+//         ]
+//       }
+//     ];
+
+//     // Add payment if amount_paid > 0
+//     if (amount_paid > 0) {
+//       queries.push({
+//         sql: `
+//           INSERT INTO payments (
+//             consultation_id, patient_id, dentist_id, patient_name, payment_date,
+//             amount_paid, payment_method, remaining_balance, receipt_number, created_by
+//           ) VALUES (LAST_INSERT_ID(), ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
+//         `,
+//         params: [
+//           patientId,
+//           dentistId,
+//           `${first_name} ${last_name}`,
+//           date_of_consultation,
+//           amount_paid,
+//           total_price - amount_paid,
+//           paymentReceiptNumber,
+//           createdBy
+//         ]
+//       });
+//     }
+
+//     // Add follow-up appointment if needs_followup is true
+//     let followUpAppointment = null;
+//     if (needs_followup) {
+//       // Use the provided follow_up_time instead of hardcoded '09:00'
+//       const appointmentTime = followUpTimeStr;
+
+//       // Check for time slot availability
+//       const existingAppointments = await executeQuery(
+//         `
+//           SELECT id FROM appointments 
+//           WHERE dentist_id = ? AND appointment_date = ? AND appointment_time = ? AND status != 'cancelled'
+//         `,
+//         [dentistId, followUpDateStr, appointmentTime]
+//       );
+
+//       if (existingAppointments.length > 0) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Time slot ${appointmentTime} on ${followUpDateStr} is already taken`
+//         });
+//       }
+
+//       queries.push({
+//         sql: `
+//           INSERT INTO appointments (
+//             patient_id, dentist_id, appointment_date, appointment_time,
+//             patient_name, patient_phone, treatment_type, status, created_by, consultation_id
+//           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, LAST_INSERT_ID())
+//         `,
+//         params: [
+//           patientId,
+//           dentistId,
+//           followUpDateStr,
+//           appointmentTime,
+//           `${first_name} ${last_name}`,
+//           phone || null,
+//           'Follow-up',
+//           'confirmed',
+//           createdBy
+//         ]
+//       });
+//     }
+
+//     // Execute transaction for consultation, payment, and appointment
+//     const results = await executeTransaction(queries);
+
+//     const consultationId = results[0].insertId;
+//     if (needs_followup) {
+//       followUpAppointment = {
+//         id: results[queries.length - 1].insertId,
+//         appointment_date: followUpDateStr,
+//         appointment_time: followUpTimeStr,
+//         treatment_type: 'Follow-up'
+//       };
+//     }
+
+//     res.status(201).json({
+//       success: true,
+//       message: 'Consultation created successfully',
+//       data: {
+//         id: consultationId,
+//         receipt_number: consultationReceiptNumber,
+//         patient_id: patientId,
+//         patient_name: `${first_name} ${last_name}`,
+//         date_of_consultation,
+//         type_of_prosthesis,
+//         teinte, // Include teinte in response
+//         total_price,
+//         amount_paid,
+//         remaining_balance,
+//         needs_followup,
+//         follow_up_appointment: followUpAppointment
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error('Create consultation error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Failed to create consultation',
+//       error: error.message
+//     });
+//   }
+// };
+
+
+
 const createConsultation = async (req, res) => {
   try {
     const {
@@ -364,12 +600,12 @@ const createConsultation = async (req, res) => {
       phone,
       date_of_consultation,
       type_of_prosthesis,
-      teinte, // Added teinte field
+      teinte,
       total_price = 0,
       amount_paid = 0,
       needs_followup = false,
       follow_up_date,
-      follow_up_time = '09:00' // Default to 9:00 AM if not provided
+      follow_up_time = '09:00'
     } = req.body;
 
     const dentistId = req.dentistId;
@@ -380,6 +616,20 @@ const createConsultation = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'First name and last name are required'
+      });
+    }
+
+    // Validate type_of_prosthesis
+    if (!type_of_prosthesis || typeof type_of_prosthesis !== 'string' || type_of_prosthesis.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type of prosthesis is required and must be a non-empty string'
+      });
+    }
+    if (type_of_prosthesis.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type of prosthesis must not exceed 100 characters'
       });
     }
 
@@ -440,14 +690,34 @@ const createConsultation = async (req, res) => {
       });
     }
 
+    // Validate total_price and amount_paid
+    if (total_price < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Total price cannot be negative'
+      });
+    }
+    if (amount_paid < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount paid cannot be negative'
+      });
+    }
+    if (amount_paid > total_price) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount paid cannot exceed total price'
+      });
+    }
+
     // Generate receipt numbers
     const consultationReceiptNumber = generateReceiptNumber(dentistId, 'CON');
     const paymentReceiptNumber = amount_paid > 0 ? generateReceiptNumber(dentistId, 'PAY') : null;
 
-    // Calculate remaining_balance for response and payments table
+    // Calculate remaining_balance
     const remaining_balance = total_price - amount_paid;
 
-    // Insert patient first to get patient_id
+    // Insert patient
     const patientResult = await executeQuery(
       `
         INSERT INTO patients (
@@ -458,41 +728,40 @@ const createConsultation = async (req, res) => {
     );
     const patientId = patientResult.insertId;
 
-    // Prepare transaction queries
-    const queries = [
-      // Create consultation
-      {
-        sql: `
-          INSERT INTO consultations (
-            patient_id, dentist_id, date_of_consultation, type_of_prosthesis,
-            teinte, total_price, amount_paid, needs_followup, created_by, receipt_number
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        params: [
-          patientId,
-          dentistId,
-          date_of_consultation,
-          type_of_prosthesis,
-          teinte || null, // Use provided teinte or null
-          total_price,
-          amount_paid,
-          needs_followup,
-          createdBy,
-          consultationReceiptNumber
-        ]
-      }
-    ];
+    // Insert consultation
+    const consultationResult = await executeQuery(
+      `
+        INSERT INTO consultations (
+          patient_id, dentist_id, date_of_consultation, type_of_prosthesis,
+          teinte, total_price, amount_paid, needs_followup, created_by, receipt_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        patientId,
+        dentistId,
+        date_of_consultation,
+        type_of_prosthesis.trim(),
+        teinte || null,
+        total_price,
+        amount_paid,
+        needs_followup,
+        createdBy,
+        consultationReceiptNumber
+      ]
+    );
+    const consultationId = consultationResult.insertId;
 
-    // Add payment if amount_paid > 0
+    // Insert payment if amount_paid > 0
     if (amount_paid > 0) {
-      queries.push({
-        sql: `
+      await executeQuery(
+        `
           INSERT INTO payments (
             consultation_id, patient_id, dentist_id, patient_name, payment_date,
             amount_paid, payment_method, remaining_balance, receipt_number, created_by
-          ) VALUES (LAST_INSERT_ID(), ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, 'cash', ?, ?, ?)
         `,
-        params: [
+        [
+          consultationId,
           patientId,
           dentistId,
           `${first_name} ${last_name}`,
@@ -502,13 +771,12 @@ const createConsultation = async (req, res) => {
           paymentReceiptNumber,
           createdBy
         ]
-      });
+      );
     }
 
-    // Add follow-up appointment if needs_followup is true
+    // Insert follow-up appointment if needs_followup is true
     let followUpAppointment = null;
     if (needs_followup) {
-      // Use the provided follow_up_time instead of hardcoded '09:00'
       const appointmentTime = followUpTimeStr;
 
       // Check for time slot availability
@@ -527,14 +795,14 @@ const createConsultation = async (req, res) => {
         });
       }
 
-      queries.push({
-        sql: `
+      const appointmentResult = await executeQuery(
+        `
           INSERT INTO appointments (
             patient_id, dentist_id, appointment_date, appointment_time,
             patient_name, patient_phone, treatment_type, status, created_by, consultation_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, LAST_INSERT_ID())
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        params: [
+        [
           patientId,
           dentistId,
           followUpDateStr,
@@ -543,20 +811,15 @@ const createConsultation = async (req, res) => {
           phone || null,
           'Follow-up',
           'confirmed',
-          createdBy
+          createdBy,
+          consultationId
         ]
-      });
-    }
+      );
 
-    // Execute transaction for consultation, payment, and appointment
-    const results = await executeTransaction(queries);
-
-    const consultationId = results[0].insertId;
-    if (needs_followup) {
       followUpAppointment = {
-        id: results[queries.length - 1].insertId,
+        id: appointmentResult.insertId,
         appointment_date: followUpDateStr,
-        appointment_time: followUpTimeStr,
+        appointment_time: appointmentTime,
         treatment_type: 'Follow-up'
       };
     }
@@ -570,8 +833,8 @@ const createConsultation = async (req, res) => {
         patient_id: patientId,
         patient_name: `${first_name} ${last_name}`,
         date_of_consultation,
-        type_of_prosthesis,
-        teinte, // Include teinte in response
+        type_of_prosthesis: type_of_prosthesis.trim(),
+        teinte,
         total_price,
         amount_paid,
         remaining_balance,
@@ -589,7 +852,6 @@ const createConsultation = async (req, res) => {
     });
   }
 };
-
 
 
 
