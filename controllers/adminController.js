@@ -109,7 +109,7 @@ const approveUser = async (req, res) => {
 
     // Check if user exists and is pending
     const user = await executeQuery(
-      'SELECT id, email, first_name, last_name, status FROM users WHERE id = ? AND status = "pending"',
+      'SELECT id, email, first_name, last_name, status FROM users WHERE id = ? AND status = \'pending\'',
       [userId]
     );
 
@@ -153,7 +153,7 @@ const rejectUser = async (req, res) => {
 
     // Check if user exists and is pending
     const user = await executeQuery(
-      'SELECT id, email, first_name, last_name, status FROM users WHERE id = ? AND status = "pending"',
+      'SELECT id, email, first_name, last_name, status FROM users WHERE id = ? AND status = \'pending\'',
       [userId]
     );
 
