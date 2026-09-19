@@ -136,10 +136,12 @@ const limiter = rateLimit({
 app.use(limiter);
 
 const corsOptions = {
- origin: [
-    'http://localhost:3000',        // for local development
-    'https://cabinetdentairesite-nine.vercel.app'  // your hosted frontend
-  ],  credentials: true,
+  origin: [
+    'http://localhost:3000',
+    'https://cabinetdentairesite-nine.vercel.app',
+    'https://frontend-dentist-tau.vercel.app'
+  ],
+  credentials: true,
   optionsSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
